@@ -72,15 +72,24 @@ already names one.
 |---|---|---|
 | `.pdf` | pdf.js | Structure tree when tagged, page geometry otherwise |
 | `.pptx` | direct | One section per slide, speaker notes included |
-| `.docx` `.doc` | anydoc | Best structural fidelity of any input |
-| `.xlsx` `.xls` `.csv` | anydoc | Markdown tables |
-| `.odt` `.rtf` `.epub` | anydoc | Headings survive if the source used real styles |
+| `.docx` `.doc` | firecrawl/anydoc | Best structural fidelity of any input |
+| `.xlsx` `.xls` `.csv` | firecrawl/anydoc | Markdown tables |
+| `.odt` `.rtf` `.epub` | firecrawl/anydoc | Headings survive if the source used real styles |
 | `.md` `.txt` | read directly | RTL post-processing only |
 
-`.ppt` converts through anydoc but without slide boundaries; prefer `.pptx`.
+`.ppt` converts through the extractor but without slide boundaries; prefer `.pptx`.
 
-Arabic uses the same code paths and is detected by the same Unicode ranges, but is
-untested and the scrambled-text check does not cover it.
+> **Two things are called anydoc.** This skill, and [`@firecrawl/anydoc`][anydoc], the
+> library it uses for the office formats — referred to below and in the comments as *the
+> firecrawl/anydoc extractor*. **PDFs deliberately do not go through it**: its PDF
+> extractor returns Hebrew in visual order, which scrambles it beyond repair. That one
+> decision is why this tool exists rather than being a thin wrapper around that one.
+
+[anydoc]: https://www.npmjs.com/package/@firecrawl/anydoc
+
+Arabic uses the same code paths and is detected by the same Unicode ranges, but the
+scrambled-text check **cannot detect scrambled Arabic** — the signal reads Hebrew final
+forms, which no other script has. The conversion says so rather than reporting clean.
 
 ## Hebrew and RTL documents
 
@@ -93,8 +102,8 @@ as a string leaves every word reversed: `רושיג` instead of `גישור`. It
 unsearchable, and nothing downstream can repair it, because the damage happens before
 any RTL handling runs.
 
-**This is why PDFs do not go through anydoc.** anydoc's PDF extractor returns visual
-order for Hebrew, so PDFs are read with pdf.js, which returns logical order. Every
+**This is why PDFs do not go through firecrawl/anydoc.** Its PDF extractor returns
+visual order for Hebrew, so PDFs are read with pdf.js, which returns logical order. Every
 extraction is then checked regardless of which path produced it, by counting Hebrew
 final forms (ך ם ן ף ץ) — they only ever end a word in correct Hebrew, and only ever
 start one in reversed text.
@@ -116,9 +125,11 @@ line resolve RTL with no HTML at all. The `.html` output does not need it — di
 lives on the `<html>` element there.
 
 **Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
-returns nothing and you get an empty document — the command warns when this happens. Add
-a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
-pass the same check.
+returns nothing. The conversion refuses with exit code 4 and writes nothing: an empty
+document reported as a success is the silent loss this tool exists to avoid, and a batch
+caller scripted against the exit codes would file a 200-page scan as converted. Add a
+text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
+pass the same check. `--force` writes the empty document anyway.
 
 **`--force` is not the default on purpose.** Output that is silently wrong is worse than
 a conversion that refuses: scrambled Hebrew looks like text, survives review, and only
@@ -238,9 +249,15 @@ in anyone's git history. Point `ANYDOC_CORPUS` at a folder of them and the snaps
 kept beside them.
 
 ```bash
-ANYDOC_CORPUS=~/anydoc-corpus npm run corpus          # compare against snapshots
+npm run corpus                                        # the generated corpus
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus          # your own documents
 ANYDOC_CORPUS=~/anydoc-corpus npm run corpus -- -u    # record the current output
 ```
+
+With no folder given, the same runner converts a **generated** corpus — the page shapes
+that broke real conversions, rebuilt with no real data — against snapshots committed
+under `test/snapshots/`. That is the version CI runs, because a contributor cannot see
+your private corpus and a layer nobody can run is no signal at all.
 
 Each snapshot holds the Markdown and the verification report. A snapshot is not a claim
 that the output is right — it records what it was. Read the diff when one changes: that
@@ -279,6 +296,12 @@ Exit codes are part of the interface, so a caller does not have to parse stderr:
 | 0 | Success |
 | 1 | Failure — missing file, unsupported format, bad arguments |
 | 2 | Extraction returned scrambled text and was refused |
+| 3 | `--verify` found text missing from the output, or a number changed |
+| 4 | The document holds no text to convert (an un-OCR'd scan) |
+
+An unknown option or a missing flag value is exit 1. A typo is never ignored: silently
+dropping a mistyped `--verify` would turn a checked conversion into an unchecked one
+that looks the same.
 
 From Python:
 
@@ -306,7 +329,7 @@ a document that came out wrong, and several were nearly reverted by the next fix
 - **`dir` goes on `<html>`, not `direction: rtl` in CSS.** `dir` is inherited and gives
   the Unicode bidi algorithm a base direction. CSS alone sets visual direction without
   that base, and mixed Hebrew/Latin runs — IDs, phone numbers, currency — come out wrong.
-- **PDFs do not go through anydoc.** Its PDF extractor returns Hebrew in visual order,
+- **PDFs do not go through firecrawl/anydoc.** Its PDF extractor returns Hebrew in visual order,
   every word character-reversed, which nothing downstream can repair.
 - **List numbering is copied, never regenerated.** Markdown renumbers ordered lists, so
   one is only emitted where the document's own labels match what Markdown would render.

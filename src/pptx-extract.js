@@ -1,7 +1,7 @@
 /**
  * PowerPoint → Markdown, preserving slide boundaries.
  *
- * anydoc extracts .pptx text correctly but flattens the whole deck into one
+ * The firecrawl/anydoc extractor reads .pptx text correctly but flattens the deck into one
  * continuous run, so a 34-slide presentation arrives with no indication of where
  * one slide ends and the next begins. This reads the slide parts directly and
  * emits a heading per slide, keeping speaker notes attached to their slide.

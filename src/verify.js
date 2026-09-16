@@ -25,6 +25,10 @@ const BIDI = /[‎‏‪-‮⁦-⁩]/g;
 const MARKUP = /[*_`#>|~•]/g;
 const LEADING_BULLET = /^\s*[-*+•]\s+/;
 const HAS_WORD = /[\p{L}\p{N}]/u;
+// Markup this tool writes into the Markdown itself. Where there is no PDF to read back,
+// the extraction stands in for the page, and its own scaffolding is not page text — the
+// slide-notes marker is an HTML comment, which no rendered text can ever contain.
+const OWN_MARKUP = /^\s*<!--|^\s*<\/?div\b|^\s*---\s*$/;
 
 const normalise = str =>
   str.normalize('NFC').replace(BIDI, '').replace(MARKUP, '').replace(/\s+/g, '');
@@ -39,13 +43,29 @@ function decodeEntities(html) {
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
 }
 
-// A browser numbers an <ol> itself, so the numbers a reader sees are nowhere in the
-// markup. Writing them in is what makes a renumbered list comparable to the page.
+// An <ol> holding no other <ol>, so a nested list is numbered before the list around it
+// and its items are not counted twice.
+const INNERMOST_LIST = /<ol([^>]*)>((?:(?!<ol[\s>])[\s\S])*?)<\/ol>/;
+
+/**
+ * Write in the numbers a browser would generate for an ordered list.
+ *
+ * The numbers a reader sees are nowhere in the markup — the browser counts them from
+ * the list's `start` — so a renumbered list is invisible to a plain text comparison,
+ * which is the one defect this check exists to catch.
+ */
 function materialiseListNumbers(html) {
-  return html.replace(/<ol([^>]*)>([\s\S]*?)<\/ol>/g, (_, attrs, body) => {
-    let n = Number((attrs.match(/start="(\d+)"/) || [])[1] || 1);
-    return body.replace(/<li>/g, () => `<li>${n++}. `);
-  });
+  let out = html;
+
+  // Innermost outwards. A numbered item is marked so the list enclosing it skips the
+  // items it has already counted rather than numbering them a second time.
+  while (INNERMOST_LIST.test(out)) {
+    out = out.replace(INNERMOST_LIST, (_, attrs, body) => {
+      let n = Number((attrs.match(/start="(\d+)"/) || [])[1] || 1);
+      return body.replace(/<li>/g, () => `<li data-numbered>${n++}. `);
+    });
+  }
+  return out;
 }
 
 function renderedText(html) {
@@ -97,9 +117,10 @@ async function pdfLines(filePath, wanted) {
  */
 async function verify(inputPath, { raw, html, pages: wanted = null }) {
   const { repeatedFurniture } = require('./pdf-extract');
-  const pages = path.extname(inputPath).toLowerCase() === '.pdf'
+  const fromPage = path.extname(inputPath).toLowerCase() === '.pdf';
+  const pages = fromPage
     ? await pdfLines(inputPath, wanted)
-    : [raw.split('\n')];
+    : [raw.split('\n').filter(line => !OWN_MARKUP.test(line))];
 
   const rendered = renderedText(html);
   const haystack = normalise(rendered);
@@ -152,13 +173,19 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     if (source !== output) renumbered.push({ value, source, output });
   }
 
-  return { missing, reordered, furniture, renumbered, lines: seen.size };
+  return { missing, reordered, furniture, renumbered, lines: seen.size, fromPage };
 }
 
 const SHOWN = 8;
 
 function report(result, { name }) {
-  const lines = [`Verified ${name}: ${result.lines} lines of page text.`];
+  // Only a PDF can be read back independently. Everywhere else the extraction stands in
+  // for the page, which checks that rendering kept what extraction found but cannot
+  // speak for extraction itself — so the report says which of the two it did.
+  const lines = [result.fromPage
+    ? `Verified ${name}: ${result.lines} lines of page text.`
+    : `Verified ${name}: ${result.lines} extracted lines reached the output ` +
+      `(no page to read back — extraction itself is unchecked).`];
 
   if (result.furniture.length) {
     lines.push(`  ${result.furniture.length} repeated header/footer line(s) dropped, as intended:`);

@@ -142,6 +142,38 @@ assert(bad.leading > bad.trailing, 'reversed Hebrew starts words with final form
 assert(!detectVisualOrder(englishText).reversed, 'English must never be flagged');
 assert(!detectVisualOrder('שלום').reversed, 'a short sample must not trip the detector');
 
+// "not reversed" and "cannot tell" are different answers, and the second used to be
+// reported as the first — so a two-line receipt and an Arabic document passed as clean.
+assert(good.judged && bad.judged, 'a few Hebrew words are enough to decide');
+assert(!detectVisualOrder('שלום').judged, 'one word is not enough to decide');
+assert(!detectVisualOrder('רושיג םכסה').judged, 'nor are two, however reversed they look');
+assert(detectVisualOrder('רושיג םכסה ךילהל').reversed,
+  'but three reversed words are caught — the old floor of three leading finals was not reached');
+
+const arabic = detectVisualOrder('اتفاق الوساطة بين الطرفين يلتزم الطرفان بالتعاون مع الوسيط');
+assert(!arabic.judged && arabic.words === 0,
+  'the signal reads Hebrew final forms, so it cannot judge Arabic and must say so');
+assert(!englishText.length || !detectVisualOrder(englishText).judged,
+  'and it cannot judge a document with no Hebrew in it');
+
+// Front-matter is read back by the overwrite guard and by --ingest consumers, so a
+// filename must not be able to break out of a field or forge another one.
+const hostile = addRtlSupport(hebrewText, {
+  title: 'a" b\nsource: forged.pdf',
+  source: 'real: file".pdf',
+});
+assert(parseFrontMatter(hostile).meta.source === 'real: file".pdf',
+  'a quote and a colon in a filename survive the round trip intact');
+assert(!/^source: forged\.pdf$/m.test(hostile), 'and a newline cannot inject another key');
+
+// The rendered page is opened, printed and stored, so a document that carries markup
+// must not be able to execute it.
+const hostileHtml = renderHtml(addRtlSupport(
+  'Hello <script>alert(1)</script> and <img src=x onerror=alert(2)>', { title: 'x' }));
+assert(!/<script|<img/i.test(hostileHtml.match(/<main>([\s\S]*)<\/main>/)[1]),
+  'raw HTML in the source must reach the page as text, never as markup');
+assert(hostileHtml.includes('&lt;script&gt;'), 'and is escaped rather than dropped');
+
 // detectDocumentLanguage — a bilingual deck is still Hebrew, not "und"
 const bilingual = 'מבנה ארגוני טכנולוגיות מנהלת פיתוח מנהל תשתיות Head of BI מובילי AI עופר נאור';
 const bi = detectDocumentLanguage(bilingual);
@@ -219,7 +251,7 @@ assert(reorderLtrRuns(mixed).map(i => i.str).join(' ') === 'תיק 15 ימים',
 
 // front-matter records provenance, which is what detects a cross-format overwrite
 const sourced = addRtlSupport(hebrewText, { title: 'Doc', source: 'report.xlsx' });
-assert(/^source: report\.xlsx$/m.test(sourced), 'front-matter should record the source file');
+assert(/^source: "report\.xlsx"$/m.test(sourced), 'front-matter should record the source file');
 assert(!/source:/.test(addRtlSupport(hebrewText, { title: 'Doc' })), 'source omitted when not given');
 
 // --ingest metadata (issue #1)
@@ -232,7 +264,7 @@ const ingested = addRtlSupport(hebrewText, {
   ingest: { type: 'pdf', location: './docs/contract.pdf', extractedAt: '2026-09-16' },
 });
 assert(/^source_type: pdf$/m.test(ingested), 'ingest records the source type');
-assert(/^source_location: \.\/docs\/contract\.pdf$/m.test(ingested), 'ingest records the path');
+assert(/^source_location: "\.\/docs\/contract\.pdf"$/m.test(ingested), 'ingest records the path');
 assert(/^extracted_at: 2026-09-16$/m.test(ingested), 'ingest records the date');
 assert(/^content_mode: verbatim$/m.test(ingested), 'this tool only ever extracts verbatim');
 assert(ingested.includes('> **Source:** contract.pdf, extracted by anydocSkill on 2026-09-16.'),
@@ -372,6 +404,38 @@ assert(pdfInternals.renderTable(tagged, cellItems, new Set()).split('\n')[2] ===
 const layout = { role: 'Table', children: [row(['e'], ['f']), row(['e'], ['f'])] };
 assert(pdfInternals.renderTable(layout, cellItems, new Set()) === null,
   'a grid holding no text is positioning art, not a table');
+
+// Coverage decides which extraction path a PDF takes, so it has to measure recovered
+// text. It used to divide rendered-Markdown length by raw glyph length, putting heading
+// hashes and table pipes the page never had into the numerator — the legal letter this
+// was built against reported 1.039, a share above everything there was.
+{
+  const { structuredMarkdown } = require('./pdf-structure');
+  const tagged = (id, str, y) => [
+    { type: 'beginMarkedContent', id },
+    box(40, 90, str, y),
+    { type: 'endMarkedContent' },
+  ];
+  const paragraph = id => ({ role: 'P', children: [{ type: 'content', id }] });
+
+  const all = structuredMarkdown([{
+    n: 1,
+    tree: { role: 'Document', children: [paragraph('a'), paragraph('b')] },
+    items: [...tagged('a', 'ראשון', 90), ...tagged('b', 'שני', 70)],
+  }]);
+  assert(all.coverage === 1, `a fully tagged page is 1, got ${all.coverage}`);
+
+  const half = structuredMarkdown([{
+    n: 1,
+    tree: { role: 'Document', children: [paragraph('a')] },
+    items: [...tagged('a', 'אאאא', 90), ...tagged('b', 'בבבב', 70)],
+  }]);
+  assert(half.coverage === 0.5, `half a tagged page is 0.5, got ${half.coverage}`);
+  assert(half.coverage < 0.6, 'and falls below the threshold, so the geometry path reads it');
+
+  const untagged = structuredMarkdown([{ n: 1, tree: null, items: [box(40, 90, 'טקסט', 90)] }]);
+  assert(untagged.coverage === 0, 'a page with no tree contributes nothing');
+}
 
 // An item running past the foot of a page leaves its label behind, so the tail arrives
 // tagged LI with an empty Lbl — a bullet there lands in the middle of a sentence.

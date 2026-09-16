@@ -1,10 +1,12 @@
 {
   "name": "anydoc-skill",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Claude Code skill: convert documents to Markdown and HTML with correct Hebrew RTL layout",
-  "main": "src/rtl.js",
+  "bin": {
+    "anydoc": "src/convert.js"
+  },
   "scripts": {
-    "test": "npm run test:unit && npm run test:integration",
+    "test": "npm run test:unit && npm run test:integration && npm run corpus",
     "test:unit": "node src/rtl.test.js",
     "test:integration": "node test/integration.test.js",
     "convert": "node src/convert.js",

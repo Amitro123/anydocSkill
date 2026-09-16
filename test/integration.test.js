@@ -16,6 +16,10 @@ const fx = require('./fixtures');
 const CLI = path.join(__dirname, '..', 'src', 'convert.js');
 const dir = fx.tempDir();
 
+// On exit rather than at the end of the file: a failing assertion throws past the last
+// statement, and a red suite used to leave a temp directory behind on every run.
+process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+
 function convert(input, format = 'both', extra = []) {
   const out = path.join(dir, 'out', path.basename(input).replace(/\W/g, '_') + extra.join(''));
   execFileSync(process.execPath, [CLI, input, '--format', format, '--out-dir', out, ...extra],
@@ -80,7 +84,7 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
 
   const { md } = convert(deck, 'md', ['--ingest']);
   assert(/^source_type: pptx$/m.test(md), 'source type comes from the extension');
-  assert(md.includes(`source_location: ${deck}`), 'source location is the path as given');
+  assert(md.includes(`source_location: ${JSON.stringify(deck)}`), 'source location is the path as given');
   assert(md.includes(`extracted_at: ${today}`), 'extraction date is recorded');
   assert(/^content_mode: verbatim$/m.test(md), 'content mode is recorded');
   assert(md.includes('> **Source:** deck.pptx, extracted by anydocSkill on '),
@@ -244,7 +248,7 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
 // --- Provenance is recorded, which is what catches a cross-format overwrite ---
 {
   const { md } = convert(fx.writeCsv(dir));
-  assert(/^source: table\.csv$/m.test(md), 'front-matter should record the source file');
+  assert(/^source: "table\.csv"$/m.test(md), 'front-matter should record the source file');
 }
 
 // --- Exit codes are a contract for callers in any language (issue #2) ---
@@ -285,5 +289,4 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(fs.existsSync(path.join(dir, 'reversed.md')), '--force writes the output anyway');
 }
 
-fs.rmSync(dir, { recursive: true, force: true });
 console.log('All integration tests passed.');

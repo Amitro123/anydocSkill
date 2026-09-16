@@ -7,11 +7,15 @@
  * for a repeated footer deleted two tickets, an escape meant for a stray "#" flattened
  * a syllabus. Neither was caught by a test. This is the suite that catches the next one.
  *
- * The documents stay out of the repository. They are the ones people actually convert —
+ * Real documents stay out of the repository. They are the ones people actually convert —
  * invoices, letters, court filings — and they carry names, ID numbers and medical
  * details that have no business in a public repo or in anyone's git history. Point
  * ANYDOC_CORPUS at a folder outside it, and keep the snapshots beside the documents.
  *
+ * With no folder given, the same runner converts the generated corpus in fixtures.js,
+ * whose snapshots are committed under test/snapshots/. That is the version CI runs.
+ *
+ *   npm run corpus                                        # the generated corpus
  *   ANYDOC_CORPUS=~/anydoc-corpus npm run corpus          # compare against snapshots
  *   ANYDOC_CORPUS=~/anydoc-corpus npm run corpus -- -u    # record the current output
  *
@@ -27,19 +31,32 @@ const { execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', 'src', 'convert.js');
 const CONVERTIBLE = /\.(pdf|docx|doc|pptx|ppt|xlsx|xls|csv|odt|rtf|epub)$/i;
 
-const corpus = process.env.ANYDOC_CORPUS;
 const update = process.argv.includes('-u') || process.argv.includes('--update');
 
-if (!corpus) {
-  console.log('No ANYDOC_CORPUS set — skipping. See the comment in test/corpus.test.js.');
-  process.exit(0);
-}
-if (!fs.existsSync(corpus)) {
-  console.error(`ANYDOC_CORPUS is ${corpus}, which does not exist.`);
-  process.exit(1);
+// On exit, so a failing document does not leave its output behind on every run.
+const scratch = [];
+process.on('exit', () => scratch.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
+
+// Without a folder of real documents, the same runner converts the generated corpus
+// instead, whose snapshots are committed. That is what CI has to go on: a contributor
+// cannot see the private corpus, and a suite nobody can run is no signal at all.
+let corpus = process.env.ANYDOC_CORPUS;
+let snapshots;
+
+if (corpus) {
+  if (!fs.existsSync(corpus)) {
+    console.error(`ANYDOC_CORPUS is ${corpus}, which does not exist.`);
+    process.exit(1);
+  }
+  snapshots = path.join(corpus, 'snapshots');
+} else {
+  corpus = require('./fixtures').tempDir();
+  scratch.push(corpus);
+  require('./fixtures').writeCorpus(corpus);
+  snapshots = path.join(__dirname, 'snapshots');
+  console.log('No ANYDOC_CORPUS set — converting the generated corpus instead.\n');
 }
 
-const snapshots = path.join(corpus, 'snapshots');
 fs.mkdirSync(snapshots, { recursive: true });
 
 const documents = fs.readdirSync(corpus)
@@ -62,6 +79,7 @@ const failures = [];
 for (const name of documents) {
   const input = path.join(corpus, name);
   const out = fs.mkdtempSync(path.join(require('os').tmpdir(), 'anydoc-corpus-'));
+  scratch.push(out);
 
   let verification = '';
   try {

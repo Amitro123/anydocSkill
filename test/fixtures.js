@@ -349,8 +349,44 @@ function writeNumberedPdf(dir) {
   return writeLaidOutPdf(dir, [lines], 'numbered');
 }
 
+/**
+ * A page in two columns, with a line of full-width text above them.
+ *
+ * Sorting a page like this by y alone interleaves the columns line by line. The gutter
+ * has to be found and each column read through, which has no other end-to-end cover.
+ */
+const writeTwoColumnPdf = dir => writeLaidOutPdf(dir, [[
+  [72, 720, 'Quarterly report, both divisions'],
+  ...['North opened two sites', 'in the first quarter, and', 'hired eleven people.']
+    .map((text, i) => [72, 660 - i * 14, text]),
+  ...['South closed one site', 'over the same period and', 'moved four people north.']
+    .map((text, i) => [330, 660 - i * 14, text]),
+]], 'two-column');
+
+/**
+ * The documents the committed corpus converts.
+ *
+ * Each is a page shape that broke a real conversion or that nothing else covers
+ * end-to-end. They are generated rather than committed so the suite carries no real
+ * document, and so what is under test is readable here rather than hidden in a binary.
+ */
+function writeCorpus(dir) {
+  return [
+    writeInvoicePdf(dir),
+    writeTicketsPdf(dir),
+    writeNumberedPdf(dir),
+    writeTwoColumnPdf(dir),
+    writePdf(dir),
+    writeMultiPagePdf(dir, 3),
+    writePptx(dir),
+    writeXlsx(dir),
+    writeCsv(dir),
+    writeOdt(dir),
+  ];
+}
+
 module.exports = {
-  HEBREW, tempDir, EMISSION_ORDERS,
+  HEBREW, tempDir, EMISSION_ORDERS, writeTwoColumnPdf, writeCorpus,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
 };
