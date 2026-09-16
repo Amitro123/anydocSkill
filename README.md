@@ -7,7 +7,7 @@ with correct right-to-left layout for Hebrew.
 
 ```bash
 claude plugin marketplace add Amitro123/anydoceSkill
-claude plugin install anydoc@anydoceSkill
+claude plugin install anydoc@anydoc-skill
 ```
 
 Node dependencies install automatically (`npm ci --ignore-scripts`) because this repo

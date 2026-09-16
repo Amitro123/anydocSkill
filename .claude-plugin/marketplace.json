@@ -1,0 +1,15 @@
+{
+  "name": "anydoc-skill",
+  "description": "Document conversion to Markdown and HTML with correct right-to-left layout for Hebrew.",
+  "owner": {
+    "name": "Amit Rosen",
+    "url": "https://github.com/Amitro123"
+  },
+  "plugins": [
+    {
+      "name": "anydoc",
+      "source": "./",
+      "description": "Convert PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown and to a standalone HTML page, with correct right-to-left layout for Hebrew."
+    }
+  ]
+}
