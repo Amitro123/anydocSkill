@@ -27,8 +27,9 @@ function parseArgs(argv) {
 async function toMarkdown(inputPath) {
   const ext = path.extname(inputPath).toLowerCase();
 
-  // Markdown input needs no conversion — go straight to RTL post-processing.
-  if (ext === '.md' || ext === '.markdown') {
+  // Text input needs no conversion — go straight to RTL post-processing. anydoc
+  // rejects .txt outright, and plain text is the one thing it never needs to parse.
+  if (['.md', '.markdown', '.txt'].includes(ext)) {
     return fs.readFileSync(inputPath, 'utf8');
   }
 
@@ -58,6 +59,8 @@ async function toMarkdown(inputPath) {
 }
 
 async function convert({ input, format, outDir, force }) {
+  if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
+
   const title = path.basename(input, path.extname(input));
   const dir = outDir || path.dirname(input);
   fs.mkdirSync(dir, { recursive: true });
@@ -69,20 +72,32 @@ async function convert({ input, format, outDir, force }) {
     throw new Error(
       `Extracted Hebrew is in visual order — every word is character-reversed.\n` +
       `(${order.leading} words start with a final-form letter, ${order.trailing} end with one.)\n\n` +
-      `This is an anydoc PDF extraction bug for RTL scripts, not a rendering problem:\n` +
-      `the text is already scrambled before any RTL handling runs, so the output would\n` +
-      `be unreadable and unsearchable.\n\n` +
+      `The extractor returned visual rather than logical order, so the text was\n` +
+      `scrambled before any RTL handling ran. Nothing downstream can repair it, and\n` +
+      `the output would be unreadable and unsearchable.\n\n` +
       `Options:\n` +
-      `  - Convert from the original .docx instead, which extracts correctly\n` +
+      `  - Convert from an original .docx or .pptx instead, which extract correctly\n` +
       `  - Re-run with --force to write the output anyway\n`
     );
   }
 
-  const markdown = addRtlSupport(raw, title);
+  const markdown = addRtlSupport(raw, title, path.basename(input));
   const written = [];
+
+  // report.docx and report.pdf both target report.md, so a second conversion would
+  // quietly replace the first. Overwriting a re-run of the same source is expected.
+  const warnIfForeign = outPath => {
+    if (!fs.existsSync(outPath)) return;
+    const existing = fs.readFileSync(outPath, 'utf8');
+    const source = (existing.match(/^source:\s*(.+)$/m) || [])[1];
+    if (source && source.trim() !== path.basename(input)) {
+      console.warn(`Warning: ${path.basename(outPath)} was converted from ${source.trim()} — overwriting.`);
+    }
+  };
 
   if (format === 'md' || format === 'both') {
     const mdPath = path.join(dir, `${title}.md`);
+    warnIfForeign(mdPath);
     fs.writeFileSync(mdPath, markdown, 'utf8');
     written.push(mdPath);
   }

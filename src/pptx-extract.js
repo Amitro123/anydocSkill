@@ -8,6 +8,14 @@
  */
 
 const AdmZip = require('adm-zip');
+const { rtlRatio } = require('./rtl');
+
+// Section labels follow the deck's own language, so an English deck does not come
+// back with Hebrew headings. Anything not detected as Hebrew falls back to English.
+const LABELS = {
+  en: { slide: n => `Slide ${n}`, notes: 'Speaker notes', empty: '_(no text on this slide)_' },
+  he: { slide: n => `שקופית ${n}`, notes: 'הערות דובר', empty: '_(שקופית ללא טקסט)_' },
+};
 
 const XML_ENTITIES = {
   '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'",
@@ -67,21 +75,26 @@ async function pptxToMarkdown(filePath, opts = {}) {
     .filter(e => /^ppt\/slides\/slide\d+\.xml$/.test(e.entryName))
     .sort((a, b) => slideNumber(a.entryName) - slideNumber(b.entryName));
 
+  // Labels depend on the deck's language, so read every slide before emitting any.
+  const parsed = slides.map(slide => ({
+    n: slideNumber(slide.entryName),
+    paragraphs: xmlToParagraphs(zip.readAsText(slide)),
+  }));
+
+  const allText = parsed.flatMap(p => p.paragraphs).join(' ');
+  const labels = rtlRatio(allText) > 0.3 ? LABELS.he : LABELS.en;
+
   const sections = [];
 
-  for (const slide of slides) {
-    const n = slideNumber(slide.entryName);
-    const paragraphs = xmlToParagraphs(zip.readAsText(slide));
-
-    const section = [`## שקופית ${n}`];
-    if (paragraphs.length) section.push(paragraphs.join('\n\n'));
-    else section.push('_(שקופית ללא טקסט)_');
+  for (const { n, paragraphs } of parsed) {
+    const section = [`## ${labels.slide(n)}`];
+    section.push(paragraphs.length ? paragraphs.join('\n\n') : labels.empty);
 
     if (includeNotes) {
       const notesPart = byName(`ppt/notesSlides/notesSlide${n}.xml`);
       if (notesPart) {
         const notes = xmlToParagraphs(zip.readAsText(notesPart));
-        if (notes.length) section.push(`> **הערות דובר:** ${notes.join(' ')}`);
+        if (notes.length) section.push(`> **${labels.notes}:** ${notes.join(' ')}`);
       }
     }
 
@@ -91,4 +104,4 @@ async function pptxToMarkdown(filePath, opts = {}) {
   return sections.join('\n\n') + '\n';
 }
 
-module.exports = { pptxToMarkdown, _internals: { xmlToParagraphs, stripFurniture } };
+module.exports = { pptxToMarkdown, _internals: { xmlToParagraphs, stripFurniture, LABELS } };

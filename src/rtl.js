@@ -67,16 +67,18 @@ function detectVisualOrder(text) {
  * Add RTL front-matter and wrap RTL paragraphs.
  * @param {string} markdown - Raw Markdown from anydoc
  * @param {string} [title] - Optional document title
+ * @param {string} [source] - Original filename, recorded for provenance
  * @returns {string} RTL-enhanced Markdown
  */
-function addRtlSupport(markdown, title = '') {
+function addRtlSupport(markdown, title = '', source = '') {
   const { dir, lang } = detectDocumentLanguage(markdown);
 
   const frontMatter = [
     '---',
     title ? `title: "${title}"` : null,
+    source ? `source: ${source}` : null,
     `dir: ${dir}`,
-    lang && lang !== 'und' ? `lang: ${lang}` : null,
+    lang ? `lang: ${lang}` : null,
     '---',
   ].filter(Boolean).join('\n');
 

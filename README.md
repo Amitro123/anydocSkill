@@ -32,8 +32,8 @@ node src/convert.js contract.pdf --format both
 node src/convert.js contract.pdf --format html --out-dir ./out
 ```
 
-`--format` accepts `md`, `html`, or `both` (default). Markdown input skips anydoc
-entirely, so an existing `.md` can be rendered to HTML without it installed.
+`--format` accepts `md`, `html`, or `both` (default). Text input (`.md`, `.txt`) skips
+extraction entirely, so an existing file can be rendered to HTML without anydoc.
 
 ## Usage as a Claude Code skill
 
@@ -86,7 +86,26 @@ headings appear however well the tree is read.
 
 anydoc flattens a deck into one continuous run. `src/pptx-extract.js` reads the slide
 parts directly so each slide becomes its own section, with speaker notes attached.
-Slide-number, footer and date placeholders inherited from the master are dropped.
+Slide-number, footer and date placeholders inherited from the master are dropped, and
+section labels follow the deck's own language rather than being hardcoded.
+
+## Formats
+
+| Format | Path | Notes |
+|---|---|---|
+| `.pdf` | pdf.js | Structure tree when tagged, geometry otherwise |
+| `.pptx` | direct | One section per slide, notes attached |
+| `.docx` `.doc` | anydoc | Best structural fidelity of any input |
+| `.xlsx` `.xls` `.csv` | anydoc | Rendered as Markdown tables |
+| `.odt` `.rtf` `.epub` | anydoc | Headings survive when the source used real styles |
+| `.md` `.txt` | read directly | RTL post-processing only |
+
+`.ppt` (legacy binary PowerPoint) goes through anydoc, so it converts but without
+slide boundaries — the direct reader needs the modern zip container. Prefer `.pptx`.
+
+Verified end to end on Hebrew samples in every row above. Arabic shares the same code
+paths and is detected by the same Unicode ranges, but has not been tested on a real
+document.
 
 ## RTL detection threshold
 

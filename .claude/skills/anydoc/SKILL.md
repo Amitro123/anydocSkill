@@ -26,8 +26,8 @@ node src/convert.js <input-file> --format both [--out-dir <dir>]
 
 Outputs land next to the input unless `--out-dir` is given. `--format` defaults to `both`.
 
-Markdown input (`.md`) skips the anydoc step and goes straight to RTL post-processing,
-so an existing Markdown file can be rendered to HTML without anydoc installed.
+Text input (`.md`, `.txt`) skips extraction and goes straight to RTL post-processing,
+so an existing file can be rendered to HTML without anydoc installed.
 
 ## What RTL handling does
 
@@ -72,11 +72,19 @@ by hand tags every block as a plain paragraph, so headings will not appear. Pref
 
 anydoc extracts .pptx text correctly but flattens the whole deck into one run, so a
 34-slide presentation arrives with no indication of where slides begin or end.
-`src/pptx-extract.js` reads the slide parts directly and emits `## שקופית N` per slide,
-with speaker notes quoted beneath their slide.
+`src/pptx-extract.js` reads the slide parts directly and emits one section per slide,
+with speaker notes quoted beneath their slide. Section labels follow the deck's own
+language, so an English deck is not labelled in Hebrew.
 
 Slide numbers, footers and dates are placeholders inherited from the slide master and
 are dropped, so they do not surface as stray digits in the slide body or the notes.
+
+## Output naming
+
+Output lands at `<basename>.md` / `<basename>.html`, and the Markdown front-matter
+records the source file. Converting `report.pdf` and `report.docx` into the same
+directory therefore warns before the second overwrites the first — re-converting the
+same source stays silent.
 
 ## After converting
 

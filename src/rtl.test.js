@@ -128,4 +128,14 @@ const mixed = [
 assert(reorderLtrRuns(mixed).map(i => i.str).join(' ') === 'תיק 15 ימים',
   'Hebrew around a lone number keeps its order');
 
+// front-matter records provenance, which is what detects a cross-format overwrite
+const sourced = addRtlSupport(hebrewText, 'Doc', 'report.xlsx');
+assert(/^source: report\.xlsx$/m.test(sourced), 'front-matter should record the source file');
+assert(!/source:/.test(addRtlSupport(hebrewText, 'Doc')), 'source is omitted when not given');
+
+// pptx labels follow the deck, so an English deck is not labelled in Hebrew
+const { _internals: pptxInternals } = require('./pptx-extract');
+assert(pptxInternals.LABELS.en.slide(3) === 'Slide 3', 'English decks use English labels');
+assert(pptxInternals.LABELS.he.slide(3) === 'שקופית 3', 'Hebrew decks keep Hebrew labels');
+
 console.log('All tests passed.');
