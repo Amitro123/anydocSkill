@@ -113,7 +113,7 @@ const { reorderLtrRuns } = require('./pdf-extract');
 const caseNumber = [
   { str: '26', transform: [0, 0, 0, 11, 454, 100] },
   { str: '-', transform: [0, 0, 0, 11, 450, 100] },
-  { str: '07', transform: [0, 0, 0, 11, 439, 100] },
+  { str: '01', transform: [0, 0, 0, 11, 439, 100] },
   { str: '-', transform: [0, 0, 0, 11, 435, 100] },
   { str: '123456', transform: [0, 0, 0, 11, 403, 100] },
 ];
