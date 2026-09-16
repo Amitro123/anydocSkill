@@ -16,10 +16,14 @@ Unless the user already named a format, ask with `AskUserQuestion`:
 Then run:
 
 ```bash
-node src/convert.js <input-file> --format both|md|html [--out-dir <dir>]
+node "${CLAUDE_PLUGIN_ROOT}/src/convert.js" <input-file> --format both|md|html [--out-dir <dir>]
 ```
 
 Output lands next to the input unless `--out-dir` is given.
+
+`${CLAUDE_PLUGIN_ROOT}` resolves to the installed plugin directory. When working inside
+this repository rather than through an install, use `node src/convert.js` instead — the
+converter is the same, only the path differs.
 
 ## What to tell the user afterwards
 

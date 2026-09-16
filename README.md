@@ -3,13 +3,21 @@
 Claude Code skill that converts documents to Markdown and to a standalone HTML page,
 with correct right-to-left layout for Hebrew.
 
-## Install
+## Install as a Claude Code plugin
+
+```bash
+claude plugin marketplace add Amitro123/anydoceSkill
+claude plugin install anydoc@anydoceSkill
+```
+
+Node dependencies install automatically (`npm ci --ignore-scripts`) because this repo
+ships a `package-lock.json`. Requires Node 22.13 or later.
+
+## Or work on it directly
 
 ```bash
 npm install
 ```
-
-Requires Node 22.13 or later.
 
 ## Use
 
@@ -22,8 +30,8 @@ node src/convert.js report.docx --format html --out-dir ./out
 `--format` is `md`, `html`, or `both` (default). Output lands next to the input unless
 `--out-dir` is given. `--force` writes output that failed the scrambled-text check.
 
-As a Claude Code skill, `/anydoc <file>` — it asks which format you want unless your
-request already names one.
+As a skill, `/anydoc <file>` — it asks which format you want unless your request
+already names one.
 
 ## Formats
 
