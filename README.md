@@ -129,6 +129,22 @@ as a heading. Those are escaped. A dash is not: a dash-prefixed line usually is 
 it looks like, and escaping them flattened a syllabus into paragraphs. A line that opens
 *and* closes with one (`- עמוד 1 -`) is decoration, and is escaped.
 
+## Tables
+
+A PDF stores a table as ruled lines and positioned glyphs. Nothing in the file says
+which value belongs under which heading — that has to be recovered from where the cells
+sit, and recovering it wrongly files a number under the wrong column. On an invoice that
+is worse than the flat text it replaces, so a run of lines becomes a table only when the
+columns are unambiguous: every row divides into the same number of cells, and the
+columns stand further apart than their own cells are ragged. Anything less stays
+paragraphs.
+
+A tagged PDF states its columns instead of implying them, and that reading is taken
+as-is — except for a grid holding no text, which is how a hand-formatted page positions
+images rather than a table worth rendering.
+
+Markdown has no row or column spans, so a table needing either is left as paragraphs.
+
 ## Knowledge-base ingest
 
 `--ingest` adds provenance metadata and a source notice, for pipelines that store

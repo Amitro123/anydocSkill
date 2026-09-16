@@ -306,6 +306,53 @@ assert(escapeBlockMarker('1. סעיף') === '1. סעיף', 'source numbering is 
 assert(escapeBlockMarker('מחיר 1,200.00 #4') === 'מחיר 1,200.00 #4',
   'a marker away from the line start decides nothing and is left alone');
 
+// Tables — a PDF records one as positioned glyphs, so the columns have to be recovered
+// from where the cells sit, and recovering them wrongly files a value under the wrong
+// heading. Fixtures follow the invoice this was built from: RTL, cells [left..right].
+const box = (left, right, str, y) => ({ str, width: right - left, transform: [0, 0, 0, 10, left, y] });
+
+const invoice = [
+  [box(569, 575, '#', 542), box(517, 555, 'מס\' פריט', 542), box(419, 465, 'תיאור', 542)],
+  [box(569, 575, '1', 526), box(549, 555, '0', 526), box(450, 465, 'יעוץ', 526)],
+];
+const table = geo.tableAt(invoice, 0, true);
+assert(table && table.end === 2, 'two rows of aligned cells are a table');
+assert(table.markdown.split('\n')[0] === '| # | מס\' פריט | תיאור |',
+  `the rightmost cell leads an RTL table — got ${table && table.markdown.split('\n')[0]}`);
+assert(table.markdown.split('\n')[2] === '| 1 | 0 | יעוץ |', 'each value stays under its heading');
+
+// Columns that wander further than they stand apart cannot be told apart.
+const ragged = [
+  [box(500, 510, 'א', 40), box(450, 460, 'ב', 40), box(400, 410, 'ג', 40)],
+  [box(500, 510, 'ד', 20), box(410, 420, 'ה', 20), box(400, 410, 'ו', 20)],
+];
+assert(geo.tableAt(ragged, 0, true) === null, 'ambiguous columns stay paragraphs');
+
+const shortRow = [invoice[0], [box(569, 575, '1', 526), box(450, 465, 'יעוץ', 526)]];
+assert(geo.tableAt(shortRow, 0, true) === null, 'a row of a different width ends the run');
+assert(geo.tableAt([invoice[0]], 0, true) === null, 'a header with no data under it is not a table');
+
+// Producers pad a row with whitespace items wide enough to span the gap between columns.
+const padded = [box(569, 575, '#', 542), box(556, 568, ' ', 542), box(517, 555, 'מס\'', 542)];
+assert(geo.lineToCells(padded, true).length === 2, 'a spacer item must not bridge two cells');
+
+// A tagged table states its columns, so that reading is trusted — unless it holds no
+// text, which is how a hand-formatted page positions images.
+const content = (id, str) => ({ role: 'TD', children: [{ type: 'content', id }] });
+const row = (...cells) => ({ role: 'TR', children: cells.map(([id]) => content(id)) });
+const cellItems = new Map([
+  ['a', [box(100, 140, 'שם', 50)]], ['b', [box(40, 80, 'סכום', 50)]],
+  ['c', [box(100, 140, 'יעוץ', 30)]], ['d', [box(40, 80, '1200', 30)]],
+  ['e', [box(100, 140, '', 10)]], ['f', [box(40, 80, '', 10)]],
+]);
+const tagged = { role: 'Table', children: [row(['a'], ['b']), row(['c'], ['d'])] };
+assert(pdfInternals.renderTable(tagged, cellItems, new Set()).split('\n')[2] === '| יעוץ | 1200 |',
+  'a tagged table is rendered from its own row and cell tags');
+
+const layout = { role: 'Table', children: [row(['e'], ['f']), row(['e'], ['f'])] };
+assert(pdfInternals.renderTable(layout, cellItems, new Set()) === null,
+  'a grid holding no text is positioning art, not a table');
+
 // A page must be assembled by position too: one producer emitted a newsletter's
 // middle section first, then its footer, then its header.
 const line = (y, str) => [{ str, transform: [0, 0, 0, 11, 100, y] }];

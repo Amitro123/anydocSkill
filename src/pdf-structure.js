@@ -115,9 +115,49 @@ function renderList(node, byId, used) {
   });
 }
 
+/**
+ * Render a tagged table, or return null when the tags do not describe a grid.
+ *
+ * Where the geometry path has to infer columns from where cells sit, a tagged table
+ * states them, so this is the reading to trust. It still has to come out rectangular:
+ * Markdown has no row or column spans, and a ragged table would silently shift cells
+ * into the wrong columns. Anything that is not a clean grid falls back to the cells
+ * being read as ordinary paragraphs, which loses the shape but never moves a value.
+ */
+function renderTable(node, byId, used) {
+  const rows = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.role === 'TR') {
+      const cells = (n.children || []).filter(c => c.role === 'TD' || c.role === 'TH');
+      if (cells.length) rows.push(cells.map(c => nodeText(c, byId, used).replace(/\|/g, '\\|')));
+      return;
+    }
+    (n.children || []).forEach(walk);
+  })(node);
+
+  const width = rows.length ? rows[0].length : 0;
+  if (rows.length < 2 || width < 2 || rows.some(r => r.length !== width)) return null;
+
+  // A grid holding no text is a layout table — the way a hand-formatted page positions
+  // images — and rendering it emits a table of empty cells where the page showed art.
+  if (!rows[0].every(Boolean) || !rows.slice(1).some(r => r.some(Boolean))) return null;
+
+  return [rows[0], rows[0].map(() => '---'), ...rows.slice(1)]
+    .map(cells => `| ${cells.join(' | ')} |`).join('\n');
+}
+
 function renderNode(node, byId, blocks, used) {
   if (!node) return;
   const role = node.role;
+
+  if (role === 'Table') {
+    const table = renderTable(node, byId, used);
+    if (table) {
+      blocks.push(table);
+      return;
+    }
+  }
 
   if (role === 'L') {
     blocks.push(...renderList(node, byId, used));
@@ -229,4 +269,4 @@ function assemble(pages) {
     .join('\n\n');
 }
 
-module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel, untaggedLines, assemble } };
+module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel, untaggedLines, assemble, renderTable } };
