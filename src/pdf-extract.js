@@ -128,6 +128,26 @@ function joinItems(items) {
   return lines.map(joinOneLine).filter(Boolean).join(' ');
 }
 
+/**
+ * Escape a Markdown block marker a page happens to open a line with.
+ *
+ * Extractors return plain text, and that text is read back as Markdown. An invoice
+ * whose first table column is headed `#` therefore comes back as a heading, and the
+ * document grows structure the page never had.
+ *
+ * `#` and `>` are escaped outright: page text never means them as Markdown. A dash is
+ * left alone, because a dash-prefixed line usually is the list it looks like and
+ * escaping those flattened a syllabus into paragraphs — unless the line closes with
+ * the same character, which is decoration (`- עמוד 1 -`) rather than a list item, as
+ * no list item ends with its own marker.
+ */
+function escapeBlockMarker(text) {
+  const decoration = text.match(/^(\s*)([-*+])(?=\s).*\2\s*$/);
+  if (decoration) return text.replace(/^(\s*)([-*+])/, '$1\\$2');
+
+  return text.replace(/^(\s*)(#{1,6}|>)(?=\s|$)/, '$1\\$2');
+}
+
 function lineY(items) {
   return items[0].transform[5];
 }
@@ -218,7 +238,7 @@ function linesToParagraphs(rawLines) {
   let current = [];
 
   const flush = () => {
-    if (current.length) paragraphs.push(current.join(' '));
+    if (current.length) paragraphs.push(escapeBlockMarker(current.join(' ')));
     current = [];
   };
 
@@ -335,6 +355,7 @@ module.exports = {
   reorderLtrRuns,
   joinItems,
   repeatedFurniture,
+  escapeBlockMarker,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
   _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines },
 };

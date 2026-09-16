@@ -123,6 +123,12 @@ bold there is only ever emphasis.
 Marking the titles as Heading 1/2/3 in Word still beats the heuristic — do that where
 you can and this never has to guess.
 
+The reverse case is handled too. Extracted page text is read back as Markdown, so a line
+that happens to open with `#` — an invoice's first table column, say — would be re-read
+as a heading. Those are escaped. A dash is not: a dash-prefixed line usually is the list
+it looks like, and escaping them flattened a syllabus into paragraphs. A line that opens
+*and* closes with one (`- עמוד 1 -`) is decoration, and is escaped.
+
 ## Knowledge-base ingest
 
 `--ingest` adds provenance metadata and a source notice, for pipelines that store

@@ -16,7 +16,9 @@
  * however well this reads the tree.
  */
 
-const { joinItems, repeatedFurniture, _internals: { joinOneLine } } = require('./pdf-extract');
+const {
+  joinItems, repeatedFurniture, escapeBlockMarker, _internals: { joinOneLine },
+} = require('./pdf-extract');
 
 const HEADING_ROLES = { H1: 1, H2: 2, H3: 3, H4: 4, H5: 5, H6: 6 };
 
@@ -130,7 +132,7 @@ function renderNode(node, byId, blocks, used) {
 
   if (role === 'P' || role === 'Caption') {
     const text = nodeText(node, byId, used);
-    if (text) blocks.push(text);
+    if (text) blocks.push(escapeBlockMarker(text));
     return;
   }
 
@@ -168,7 +170,7 @@ function untaggedLines(items, byId, used) {
   const below = [];
   for (const line of lines) {
     const text = joinOneLine(line);
-    if (text) (line[0].transform[5] > top ? above : below).push(text);
+    if (text) (line[0].transform[5] > top ? above : below).push(escapeBlockMarker(text));
   }
   return { above, below };
 }

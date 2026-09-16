@@ -290,6 +290,22 @@ assert(dropRepeatedLines(tickets).flat().length === 12, 'so every line survives'
 
 assert(repeatedFurniture([['לבד']], [1]).size === 0, 'one page has nothing to repeat against');
 
+// Extracted text is read back as Markdown, so a line opening with a block marker
+// grows structure the page never had.
+const { escapeBlockMarker } = require('./pdf-extract');
+
+assert(escapeBlockMarker('# מס\' פריט תיאור פריט כמות') === '\\# מס\' פריט תיאור פריט כמות',
+  'an invoice column headed # must not become a heading');
+assert(escapeBlockMarker('> ציטוט') === '\\> ציטוט', 'a stray > must not become a blockquote');
+assert(escapeBlockMarker('- עמוד 1 -') === '\\- עמוד 1 -',
+  'a dash on both ends is decoration — no list item closes with its own marker');
+
+assert(escapeBlockMarker('- The Environment') === '- The Environment',
+  'a plain dash-prefixed line is the list it looks like and must stay one');
+assert(escapeBlockMarker('1. סעיף') === '1. סעיף', 'source numbering is left to render as a list');
+assert(escapeBlockMarker('מחיר 1,200.00 #4') === 'מחיר 1,200.00 #4',
+  'a marker away from the line start decides nothing and is left alone');
+
 // A page must be assembled by position too: one producer emitted a newsletter's
 // middle section first, then its footer, then its header.
 const line = (y, str) => [{ str, transform: [0, 0, 0, 11, 100, y] }];
