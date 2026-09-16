@@ -21,9 +21,10 @@ function rtlRatio(text) {
 }
 
 function detectDocumentLanguage(markdown) {
-  const ratio = rtlRatio(markdown);
-  if (ratio > 0.5) return { dir: 'rtl', lang: ratio > 0.7 ? detectScript(markdown) : 'und' };
-  return { dir: 'ltr', lang: null };
+  if (rtlRatio(markdown) <= RTL_THRESHOLD) return { dir: 'ltr', lang: null };
+  // Once the base direction is RTL, Hebrew vs Arabic is a straight comparison of
+  // script counts — mixed-in Latin (tech terms, brand names) does not affect it.
+  return { dir: 'rtl', lang: detectScript(markdown) };
 }
 
 function detectScript(text) {

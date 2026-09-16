@@ -12,9 +12,11 @@ Claude Code skill that wraps [anydoc](https://github.com/firecrawl/anydoc) with 
 ## Files
 
 ```
-src/rtl.js          — RTL detection and Markdown post-processing
+src/rtl.js          — RTL detection, visual-order guard, Markdown post-processing
+src/pdf-extract.js  — PDF → Markdown via pdf.js (logical reading order)
+src/pptx-extract.js — PowerPoint → Markdown, one section per slide
 src/render-html.js  — Markdown → standalone RTL-aware HTML document
-src/convert.js      — CLI: anydoc + RTL + output formats
+src/convert.js      — CLI: routing, RTL, output formats
 src/rtl.test.js     — Unit tests
 
 .claude/skills/anydoc/SKILL.md — Claude Code skill definition
@@ -68,6 +70,12 @@ word-initially in reversed text. On a real 21-clause agreement, anydoc scored
 241 leading / 0 trailing; pdf.js scores 0 / 241 on the same file.
 
 Pass `--force` to write output that fails the check.
+
+## PowerPoint keeps slide boundaries
+
+anydoc flattens a deck into one continuous run. `src/pptx-extract.js` reads the slide
+parts directly so each slide becomes its own section, with speaker notes attached.
+Slide-number, footer and date placeholders inherited from the master are dropped.
 
 ## RTL detection threshold
 

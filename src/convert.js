@@ -39,6 +39,12 @@ async function toMarkdown(inputPath) {
     return pdfToMarkdown(inputPath);
   }
 
+  // anydoc flattens a deck into one continuous run, losing slide boundaries.
+  if (ext === '.pptx') {
+    const { pptxToMarkdown } = require('./pptx-extract');
+    return pptxToMarkdown(inputPath);
+  }
+
   let toMarkdown;
   try {
     ({ toMarkdown } = require('@firecrawl/anydoc'));

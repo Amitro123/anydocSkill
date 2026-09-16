@@ -69,4 +69,24 @@ assert(bad.leading > bad.trailing, 'reversed Hebrew starts words with final form
 assert(!detectVisualOrder(englishText).reversed, 'English must never be flagged');
 assert(!detectVisualOrder('שלום').reversed, 'a short sample must not trip the detector');
 
+// detectDocumentLanguage — a bilingual deck is still Hebrew, not "und"
+const bilingual = 'מבנה ארגוני טכנולוגיות מנהלת פיתוח מנהל תשתיות Head of BI מובילי AI עופר נאור';
+const bi = detectDocumentLanguage(bilingual);
+assert(bi.dir === 'rtl', 'Hebrew-majority text with Latin terms should be RTL');
+assert(bi.lang === 'he', `mixed Hebrew/Latin should resolve to he, got ${bi.lang}`);
+
+// pptx — page furniture must not leak into slide text
+const { _internals } = require('./pptx-extract');
+const slideXml = `<p:sp><p:nvSpPr><p:ph type="title"/></p:nvSpPr>` +
+  `<a:p><a:r><a:t>מערכות מידע</a:t></a:r></a:p></p:sp>` +
+  `<p:sp><p:nvSpPr><p:ph type="sldNum"/></p:nvSpPr>` +
+  `<a:p><a:fld><a:t>2</a:t></a:fld></a:p></p:sp>`;
+const slideParas = _internals.xmlToParagraphs(slideXml);
+assert(slideParas.includes('מערכות מידע'), 'slide title should be extracted');
+assert(!slideParas.includes('2'), 'slide-number placeholder must be dropped');
+
+// pptx — runs inside one paragraph join without a gap, entities decode
+const runXml = '<a:p><a:r><a:t>BI</a:t></a:r><a:r><a:t> &amp; AI</a:t></a:r></a:p>';
+assert(_internals.xmlToParagraphs(runXml)[0] === 'BI & AI', 'runs should join and unescape');
+
 console.log('All tests passed.');

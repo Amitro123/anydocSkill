@@ -60,6 +60,16 @@ Hebrew and only at the start in reversed text — a clean signal, not a guess. O
 
 Arabic is likely affected by the same anydoc bug but has not been verified.
 
+## PowerPoint keeps slide boundaries
+
+anydoc extracts .pptx text correctly but flattens the whole deck into one run, so a
+34-slide presentation arrives with no indication of where slides begin or end.
+`src/pptx-extract.js` reads the slide parts directly and emits `## שקופית N` per slide,
+with speaker notes quoted beneath their slide.
+
+Slide numbers, footers and dates are placeholders inherited from the slide master and
+are dropped, so they do not surface as stray digits in the slide body or the notes.
+
 ## After converting
 
 Tell the user where the files landed. If HTML was produced, offer to open or preview it —
