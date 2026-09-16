@@ -1,13 +1,19 @@
 {
   "name": "anydoc",
-  "displayName": "anydoc — document conversion with RTL",
-  "version": "0.1.0",
+  "displayName": "anydoc \u2014 document conversion with RTL",
+  "version": "0.2.0",
   "description": "Convert PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown and to a standalone HTML page, with correct right-to-left layout for Hebrew.",
   "author": {
     "name": "Amit Rosen"
   },
   "repository": "https://github.com/Amitro123/anydocSkill",
   "license": "MIT",
-  "keywords": ["documents", "markdown", "pdf", "rtl", "hebrew"],
+  "keywords": [
+    "documents",
+    "markdown",
+    "pdf",
+    "rtl",
+    "hebrew"
+  ],
   "skills": "./.claude/skills/"
 }

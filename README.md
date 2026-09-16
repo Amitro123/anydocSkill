@@ -162,6 +162,13 @@ Four decisions look like they could be simplified. They cannot:
 
 Every extraction is checked for visual-order scrambling before anything is written.
 
+## Releasing a change
+
+Installed copies update on the `version` field in `.claude-plugin/plugin.json`, not on
+new commits. Pushing a fix without bumping it leaves every existing install on the old
+code — `claude plugin update` will report it is already current. Bump the version in the
+same commit as the change.
+
 ## Tests
 
 ```bash
