@@ -128,6 +128,26 @@ function writePptx(dir, { hebrew = true } = {}) {
   return file;
 }
 
+const PDF_LINES = [
+  [72, 720, 'Mediation Agreement'],
+  [72, 700, 'Case number 123456-01-26'],
+  [72, 660, 'The parties agree to cooperate in good faith.'],
+];
+
+/**
+ * Reorder a page's text operators without moving any of it on the page.
+ *
+ * Producers disagree about emission order, and every ordering bug found so far came
+ * from code trusting that order. A fixture that only ever emits top to bottom cannot
+ * surface the next one, so the tests convert the same page emitted several ways and
+ * require identical output.
+ */
+const EMISSION_ORDERS = {
+  document: lines => lines,                                  // top to bottom
+  reversed: lines => [...lines].reverse(),                   // bottom to top
+  scrambled: lines => [lines[1], lines[2], lines[0]],        // middle, bottom, top
+};
+
 /**
  * A minimal untagged PDF using a standard font, which needs no embedding.
  *
@@ -135,13 +155,12 @@ function writePptx(dir, { hebrew = true } = {}) {
  * test the fixture more than the extractor. This exercises the geometry path — line
  * grouping, gap-based word spacing, paragraph breaks — which is what has no other
  * end-to-end coverage.
+ *
+ * @param {object} [opts]
+ * @param {keyof EMISSION_ORDERS} [opts.order='document'] - Order to emit the text in
  */
-function writePdf(dir) {
-  const lines = [
-    [72, 720, 'Mediation Agreement'],
-    [72, 700, 'Case number 123456-01-26'],
-    [72, 660, 'The parties agree to cooperate in good faith.'],
-  ];
+function writePdf(dir, { order = 'document' } = {}) {
+  const lines = EMISSION_ORDERS[order](PDF_LINES);
   const content = lines
     .map(([x, y, text]) => `BT /F1 12 Tf ${x} ${y} Td (${text}) Tj ET`)
     .join('\n');
@@ -166,12 +185,62 @@ function writePdf(dir) {
   pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
   pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
 
-  const file = path.join(dir, 'doc.pdf');
+  const file = path.join(dir, `doc-${order}.pdf`);
+  fs.writeFileSync(file, pdf, 'latin1');
+  return file;
+}
+
+/**
+ * A PDF of several pages, each naming its own number.
+ *
+ * --pages selects by page, so the thing worth asserting is that page N comes back
+ * with page N's words on it. A single-page fixture can only show that the output got
+ * shorter, which an off-by-one would satisfy just as well.
+ *
+ * @param {number} [count=3] - How many pages to write
+ */
+function writeMultiPagePdf(dir, count = 3) {
+  const body = n => `Page ${n} of ${count}. Section ${'ABCDEFGH'[n - 1]} begins here.`;
+
+  const streams = [];
+  for (let n = 1; n <= count; n++) {
+    streams.push(`BT /F1 12 Tf 72 720 Td (${body(n)}) Tj ET`);
+  }
+
+  // Object layout: 1 catalog, 2 pages, 3 font, then a page and a stream per sheet.
+  const pageId = n => 4 + (n - 1) * 2;
+  const objects = [
+    `<</Type/Catalog/Pages 2 0 R>>`,
+    `<</Type/Pages/Kids[${Array.from({ length: count }, (_, i) => `${pageId(i + 1)} 0 R`).join(' ')}]/Count ${count}>>`,
+    `<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>`,
+  ];
+  for (let n = 1; n <= count; n++) {
+    objects.push(
+      `<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]` +
+      `/Resources<</Font<</F1 3 0 R>>>>/Contents ${pageId(n) + 1} 0 R>>`,
+      `<</Length ${streams[n - 1].length}>>\nstream\n${streams[n - 1]}\nendstream`
+    );
+  }
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+
+  const file = path.join(dir, `pages-${count}.pdf`);
   fs.writeFileSync(file, pdf, 'latin1');
   return file;
 }
 
 module.exports = {
-  HEBREW, tempDir,
+  HEBREW, tempDir, EMISSION_ORDERS,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
+  writeMultiPagePdf,
 };

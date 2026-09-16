@@ -116,6 +116,68 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(html.includes('<html dir="ltr"'), 'pdf: html carries direction');
 }
 
+// --- Emission order must not reach the output ---
+//
+// Every ordering defect found so far was the same mistake in a different place:
+// code treating the order a producer emitted text in as the order to read it in.
+// Asserting one known-bad ordering only pins the case already fixed, so this
+// requires the same page to convert identically however it was emitted — which
+// also covers the orderings no one has run into yet.
+{
+  const orders = Object.keys(fx.EMISSION_ORDERS);
+  const body = md => md.slice(md.indexOf('---', 3));   // drop the per-file title
+  const outputs = orders.map(order => ({
+    order,
+    md: body(convert(fx.writePdf(dir, { order }), 'md').md),
+  }));
+
+  const [reference, ...rest] = outputs;
+  for (const other of rest) {
+    assert(other.md === reference.md,
+      `a page emitted "${other.order}" must convert the same as "${reference.order}"\n` +
+      `  ${reference.order}: ${JSON.stringify(reference.md.trim().slice(0, 90))}\n` +
+      `  ${other.order}: ${JSON.stringify(other.md.trim().slice(0, 90))}`);
+  }
+
+  // And the shared result has to be the document's own order, not merely consistent.
+  const text = reference.md.replace(/\s+/g, ' ');
+  assert(text.indexOf('Mediation Agreement') < text.indexOf('Case number'),
+    'the title must come before the case number');
+  assert(text.indexOf('Case number') < text.indexOf('cooperate in good faith'),
+    'the case number must come before the body');
+}
+
+// --- --pages selects the pages asked for, and only those ---
+//
+// Byte counts alone would pass an off-by-one, so each page names its own number and
+// the assertions read them back.
+{
+  const pdf = fx.writeMultiPagePdf(dir, 3);
+  const text = spec => convert(pdf, 'md', ['--pages', spec]).md.replace(/\s+/g, ' ');
+
+  const one = text('1');
+  assert(one.includes('Page 1 of 3'), '--pages 1 must return page 1');
+  assert(!one.includes('Page 2') && !one.includes('Page 3'), '--pages 1 must return nothing else');
+
+  const two = text('2');
+  assert(two.includes('Page 2 of 3'), '--pages 2 must return page 2, not page 1');
+  assert(!two.includes('Page 1') && !two.includes('Page 3'), '--pages 2 must return nothing else');
+
+  const range = text('2-3');
+  assert(range.includes('Page 2') && range.includes('Page 3'), 'a range returns its pages');
+  assert(!range.includes('Page 1'), 'a range excludes the pages outside it');
+  assert(range.indexOf('Page 2') < range.indexOf('Page 3'), 'a range stays in order');
+
+  const list = text('1,3');
+  assert(list.includes('Page 1') && list.includes('Page 3'), 'a list returns its pages');
+  assert(!list.includes('Page 2'), 'a list excludes the gap');
+
+  // Selecting every page must equal converting the document whole.
+  const body = md => md.slice(md.indexOf('---', 3));
+  assert(body(convert(pdf, 'md', ['--pages', '1-3']).md) === body(convert(pdf, 'md').md),
+    'selecting every page must match converting the whole document');
+}
+
 // --- Provenance is recorded, which is what catches a cross-format overwrite ---
 {
   const { md } = convert(fx.writeCsv(dir));

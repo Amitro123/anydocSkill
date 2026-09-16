@@ -184,6 +184,19 @@ The unit suite covers pure helpers; the integration suite generates a document i
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
 
+Two of those assertions are invariants rather than examples, because every ordering
+defect found so far was the same mistake in a different place — code treating the order
+a producer emitted text in as the order to read it in. Pinning each known case would
+only cover the ones already fixed:
+
+- **Emission order must not reach the output.** The same page is converted several
+  ways — top to bottom, bottom to top, scrambled — and all must produce identical
+  Markdown, which then has to be in the document's own order.
+- **`--pages` must select the pages asked for.** Each page of the fixture names its own
+  number, so an off-by-one cannot pass; comparing byte counts would let one through.
+
+Both were confirmed by reintroducing the defects they describe and watching them fail.
+
 CI runs both on Node 22.13 and 24.
 
 ## License
