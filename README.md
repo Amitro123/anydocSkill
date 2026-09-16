@@ -154,6 +154,9 @@ Four decisions look like they could be simplified. They cannot:
 - **List numbering is copied, never regenerated.** Markdown renumbers ordered lists, so
   one is only emitted where the document's own labels match what Markdown would render.
   Legal clause numbering must survive exactly.
+- **Pages and lines are both assembled by position, never by the order items arrive
+  in.** A producer may emit a page's middle before its header, or an RTL line
+  left-to-right. Neither array order is document order.
 - **RTL lines are ordered by position, never by the order items arrive in.** Producers
   disagree: Word emits an RTL line right-to-left, other tools emit it left-to-right.
   Trusting array order reverses every word of a line from the second kind.

@@ -160,7 +160,12 @@ function medianGap(lines) {
   return gaps[Math.floor(gaps.length / 2)];
 }
 
-function linesToParagraphs(lines) {
+function linesToParagraphs(rawLines) {
+  // Producers do not always emit a page top to bottom: a newsletter exported from a
+  // mail tool put its middle section first, then the footer, then the header. Array
+  // order is not document order any more than it is reading order within a line, so
+  // lines are placed by their own y. A page already emitted in order is unchanged.
+  const lines = [...rawLines].sort((a, b) => lineY(b) - lineY(a));
   const body = medianGap(lines);
   const column = columnWidth(lines);
   const paragraphs = [];
@@ -258,5 +263,5 @@ module.exports = {
   reorderLtrRuns,
   joinItems,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine },
+  _internals: { joinOneLine, linesToParagraphs },
 };

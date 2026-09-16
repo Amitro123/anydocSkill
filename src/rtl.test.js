@@ -196,4 +196,19 @@ for (const bad of ['0', '3-1', 'x', '']) {
   assert(threw, `"${bad}" must be rejected as a page spec`);
 }
 
+// A page must be assembled by position too: one producer emitted a newsletter's
+// middle section first, then its footer, then its header.
+const line = (y, str) => [{ str, transform: [0, 0, 0, 11, 100, y] }];
+// Paragraph splitting depends on gap sizes that a three-line fixture cannot model,
+// so this asserts the sequence the text comes out in, which is what the fix governs.
+const sequence = lines => geo.linesToParagraphs(lines).join(' ').split(/\s+/).join('|');
+
+const outOfOrder = [line(1842, 'אמצע'), line(6, 'תחתית'), line(5201, 'ראש')];
+assert(sequence(outOfOrder) === 'ראש|אמצע|תחתית',
+  `lines must be placed by y, not by emission order — got ${sequence(outOfOrder)}`);
+
+const inOrder = [line(5201, 'ראש'), line(1842, 'אמצע'), line(6, 'תחתית')];
+assert(sequence(inOrder) === 'ראש|אמצע|תחתית',
+  'a page already emitted top to bottom is unchanged');
+
 console.log('All tests passed.');
