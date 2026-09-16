@@ -12,12 +12,13 @@ Claude Code skill that wraps [anydoc](https://github.com/firecrawl/anydoc) with 
 ## Files
 
 ```
-src/rtl.js          — RTL detection, visual-order guard, Markdown post-processing
-src/pdf-extract.js  — PDF → Markdown via pdf.js (logical reading order)
-src/pptx-extract.js — PowerPoint → Markdown, one section per slide
-src/render-html.js  — Markdown → standalone RTL-aware HTML document
-src/convert.js      — CLI: routing, RTL, output formats
-src/rtl.test.js     — Unit tests
+src/rtl.js           — RTL detection, visual-order guard, Markdown post-processing
+src/pdf-extract.js   — PDF geometry fallback + shared item joining
+src/pdf-structure.js — Tagged-PDF structure tree reader
+src/pptx-extract.js  — PowerPoint → Markdown, one section per slide
+src/render-html.js   — Markdown → standalone RTL-aware HTML document
+src/convert.js       — CLI: routing, RTL, output formats
+src/rtl.test.js      — Unit tests
 
 .claude/skills/anydoc/SKILL.md — Claude Code skill definition
 ```
@@ -51,25 +52,35 @@ bidirectional algorithm a base direction to resolve against, so mixed Hebrew/Lat
 names, ID numbers, phone numbers, currency — lay out correctly. CSS `direction` sets
 visual direction without supplying that base, and mixed content comes out wrong.
 
-## PDFs go through pdf.js, not anydoc
+## PDFs: structure tree first, geometry as fallback
 
 anydoc's PDF path extracts Hebrew in visual order, so every word arrives
-character-reversed (`רושיג` instead of `גישור`) — unreadable and unsearchable, and
-unrecoverable downstream since the text is scrambled before any RTL handling runs.
+character-reversed (`רושיג` instead of `גישור`) — unrecoverable downstream, since the
+text is scrambled before any RTL handling runs. PDFs go through pdf.js instead.
 
-`src/pdf-extract.js` handles PDFs with pdf.js instead, which returns text items in
-logical reading order. It reconstructs lines from `hasEOL` and groups them into
-paragraphs by line gap and line width, drops headers and footers that repeat on every
-page, and leaves source numbering as literal text so clause numbers in legal documents
-are never renumbered.
+A tagged PDF (Word, LibreOffice and most modern exporters produce one) carries a
+structure tree declaring its paragraphs, lists and tables. `src/pdf-structure.js` reads
+it, which gives exact boundaries rather than inferred ones and skips headers and footers
+for free, since artifacts are untagged. On a court form the tree resolved 31 blocks
+where the geometry pass had merged four separate lines into one.
 
-`convert.js` still runs a visual-order check on every extraction, whichever path
-produced it, and refuses to write scrambled output. Detection counts Hebrew final-form
-letters (ך ם ן ף ץ): they appear only word-finally in correct Hebrew and only
-word-initially in reversed text. On a real 21-clause agreement, anydoc scored
-241 leading / 0 trailing; pdf.js scores 0 / 241 on the same file.
+`src/pdf-extract.js` is the fallback for untagged PDFs, inferring paragraphs from line
+gaps and line widths. It also supplies the shared item-joining used by both paths: PDFs
+space words by positioning glyphs rather than emitting spaces, so word breaks are read
+back from the gaps between items.
 
-Pass `--force` to write output that fails the check.
+**Numbering is never rewritten.** Markdown renumbers ordered lists, so a list becomes one
+only where the document's own labels are the sequence Markdown would render. Labels that
+restart, skip, or use Hebrew letters split into separate runs or stay literal bullets.
+
+**Embedded left-to-right runs are reordered.** In an RTL paragraph pdf.js emits items
+right-to-left, which reverses a run that reads left-to-right internally: a case number
+split across items arrived as `26-01-123456` instead of `123456-01-26`. Each such run is
+sorted by ascending x, per line.
+
+The ceiling is set by how the source was authored. Both test documents tag every block
+as `P` because they were formatted by hand rather than with real heading styles, so no
+headings appear however well the tree is read.
 
 ## PowerPoint keeps slide boundaries
 

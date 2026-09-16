@@ -49,16 +49,24 @@ serif stack, dark-mode support, and print rules so it exports cleanly to PDF.
 ## PDFs use pdf.js, not anydoc
 
 anydoc's PDF extractor emits Hebrew in visual order — every word character-reversed
-(`רושיג` for `גישור`). The text is scrambled before any RTL handling runs, so nothing
-downstream can fix it. PDFs are therefore routed through `src/pdf-extract.js`, built on
-pdf.js, which returns logical reading order.
+(`רושיג` for `גישור`) — so PDFs are routed through pdf.js, which returns logical order.
 
-Every extraction is still checked for visual order regardless of source. The check
-counts Hebrew final forms (ך ם ן ף ץ), which occur only at the end of a word in correct
-Hebrew and only at the start in reversed text — a clean signal, not a guess. On failure
+Tagged PDFs (most things exported from Word) are read through their structure tree by
+`src/pdf-structure.js`, giving exact paragraph and list boundaries and skipping headers
+and footers, which are untagged. `src/pdf-extract.js` handles untagged PDFs by inferring
+paragraphs from line geometry.
+
+Document numbering is preserved literally — a Markdown ordered list is only used where
+Markdown would render the document's own labels unchanged. Left-to-right runs embedded
+in RTL text (case numbers, IDs, phone numbers) are reordered back to logical order.
+
+Every extraction is still checked for visual order whatever produced it, by counting
+Hebrew final forms (ך ם ן ף ץ) at the start versus the end of words. On failure
 `convert.js` refuses to write; `--force` overrides.
 
-Arabic is likely affected by the same anydoc bug but has not been verified.
+What a PDF cannot give you is structure the author never created: a document formatted
+by hand tags every block as a plain paragraph, so headings will not appear. Prefer the
+`.docx` or `.pptx` source when one exists.
 
 ## PowerPoint keeps slide boundaries
 

@@ -6,9 +6,10 @@
  * reading order, so this module reconstructs lines and paragraphs from item geometry
  * instead.
  *
- * Deliberately conservative: paragraphs and line breaks only. Source numbering
- * ("1.", ".1") is left as literal text rather than converted to Markdown lists, so
- * clause numbers in legal documents are never silently renumbered.
+ * A tagged PDF is read through pdf-structure.js, which uses the document's own
+ * structure tree. This geometry path is the fallback for untagged PDFs: it infers
+ * paragraphs from line gaps and line widths, and leaves source numbering as literal
+ * text so clause numbers in legal documents are never silently renumbered.
  */
 
 const PARAGRAPH_GAP_RATIO = 1.6;  // line gap beyond this multiple of the body gap starts a paragraph
@@ -34,9 +35,51 @@ function itemsToLines(items) {
   return lines;
 }
 
-// Items arrive in reading order, so a gap is the gap between neighbouring boxes
-// regardless of direction.
-function joinLine(items) {
+const HEBREW_OR_ARABIC = /[֐-ۿיִ-﻿]/;
+const LTR_CONTENT = /[0-9A-Za-z]/;
+
+const isLtrItem = item => LTR_CONTENT.test(item.str) && !HEBREW_OR_ARABIC.test(item.str);
+const isNeutralItem = item => !LTR_CONTENT.test(item.str) && !HEBREW_OR_ARABIC.test(item.str);
+
+/**
+ * Put embedded left-to-right runs back into logical order.
+ *
+ * In an RTL paragraph pdf.js emits items right-to-left, which is logical order for
+ * Hebrew but reverses a run that reads left-to-right internally. A case number split
+ * across items ("26", "-", "07", "-", "123456") therefore arrives backwards and joins
+ * as 26-01-123456 instead of 123456-01-26. Sorting each such run by ascending x
+ * restores it; a single-item run is unaffected.
+ */
+function reorderLtrRuns(items) {
+  if (!items.some(isLtrItem)) return items;
+
+  const ordered = [];
+  let i = 0;
+
+  while (i < items.length) {
+    if (!isLtrItem(items[i])) {
+      ordered.push(items[i]);
+      i++;
+      continue;
+    }
+    // Extend across neutrals (separators, spaces) so "01-123456" stays one run,
+    // then trim neutrals off the tail so they keep their place in the Hebrew flow.
+    let end = i + 1;
+    while (end < items.length && (isLtrItem(items[end]) || isNeutralItem(items[end]))) end++;
+    while (end - 1 > i && isNeutralItem(items[end - 1])) end--;
+
+    ordered.push(...items.slice(i, end).sort((a, b) => a.transform[4] - b.transform[4]));
+    i = end;
+  }
+  return ordered;
+}
+
+// PDFs usually space words by positioning glyphs rather than emitting space
+// characters, so word breaks have to be read back from the gaps between items.
+function joinOneLine(rawItems) {
+  const items = HEBREW_OR_ARABIC.test(rawItems.map(i => i.str).join(''))
+    ? reorderLtrRuns(rawItems)
+    : rawItems;
   let text = '';
 
   for (let i = 0; i < items.length; i++) {
@@ -55,6 +98,29 @@ function joinLine(items) {
     text += item.str;
   }
   return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Join text items into a string, restoring word spacing from item gaps.
+ *
+ * Items are grouped into lines first: gap arithmetic only means anything between
+ * items sharing a baseline, and a structure-tree node routinely spans several lines.
+ * Runs that read left-to-right are reordered per line, never across one.
+ */
+function joinItems(items) {
+  if (!items.length) return '';
+
+  const lines = [];
+  let line = [items[0]];
+
+  for (let i = 1; i < items.length; i++) {
+    const sameLine = Math.abs(items[i].transform[5] - line[0].transform[5]) < 2;
+    if (sameLine) line.push(items[i]);
+    else { lines.push(line); line = [items[i]]; }
+  }
+  lines.push(line);
+
+  return lines.map(joinOneLine).filter(Boolean).join(' ');
 }
 
 function lineY(items) {
@@ -101,7 +167,7 @@ function linesToParagraphs(lines) {
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const text = joinLine(lines[i]);
+    const text = joinOneLine(lines[i]);
     if (!text) continue;
 
     if (i > 0 && body > 0) {
@@ -131,6 +197,10 @@ function dropRepeatedLines(pages) {
   );
 }
 
+// Below this share of page text, the structure tree is not describing the whole
+// document and the geometry path is the safer read.
+const MIN_STRUCTURE_COVERAGE = 0.6;
+
 /**
  * @param {string} filePath - Path to a PDF
  * @returns {Promise<string>} Markdown
@@ -138,6 +208,13 @@ function dropRepeatedLines(pages) {
 async function pdfToMarkdown(filePath) {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
+
+  const { structuredMarkdown } = require('./pdf-structure');
+  const structured = await structuredMarkdown(doc);
+  if (structured.coverage >= MIN_STRUCTURE_COVERAGE) {
+    await doc.cleanup();
+    return structured.markdown;
+  }
 
   const pages = [];
   for (let n = 1; n <= doc.numPages; n++) {
@@ -155,4 +232,9 @@ async function pdfToMarkdown(filePath) {
     .trim() + '\n';
 }
 
-module.exports = { pdfToMarkdown };
+module.exports = {
+  pdfToMarkdown,
+  reorderLtrRuns,
+  joinItems,
+  isRtlText: str => HEBREW_OR_ARABIC.test(str),
+};

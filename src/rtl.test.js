@@ -89,4 +89,43 @@ assert(!slideParas.includes('2'), 'slide-number placeholder must be dropped');
 const runXml = '<a:p><a:r><a:t>BI</a:t></a:r><a:r><a:t> &amp; AI</a:t></a:r></a:p>';
 assert(_internals.xmlToParagraphs(runXml)[0] === 'BI & AI', 'runs should join and unescape');
 
+// PDF structure tree — list runs must never let Markdown renumber a document
+const { _internals: pdfInternals } = require('./pdf-structure');
+const runShape = labels =>
+  pdfInternals.labelRuns(labels.map(label => ({ label, body: 'x' })))
+    .map(r => `${r.ordered ? 'ol' : 'ul'}:${r.entries.length}`).join(' ');
+
+assert(runShape(['1', '2', '3']) === 'ol:3', 'a plain sequence is one ordered list');
+assert(runShape(['', '1', '2', '3']) === 'ul:1 ol:3',
+  'an unlabelled option must not absorb the numbered clauses after it');
+assert(runShape(['1', '2', '1', '2']) === 'ol:2 ol:2',
+  'a restarted sequence must split, never renumber');
+assert(runShape(['1', '2', '5']) === 'ol:2 ol:1',
+  'a gap in numbering must split so 5 stays 5');
+assert(runShape(['א', 'ב']) === 'ul:2', 'non-numeric labels stay bullets');
+
+assert(pdfInternals.numericLabel('1.') === 1, 'a trailing period is part of the label');
+assert(pdfInternals.numericLabel('2 )') === 2, 'spacing inside a label is tolerated');
+assert(pdfInternals.numericLabel('א') === null, 'a Hebrew letter is not a number');
+
+// PDF geometry — an embedded LTR run must survive an RTL line
+const { reorderLtrRuns } = require('./pdf-extract');
+const caseNumber = [
+  { str: '26', transform: [0, 0, 0, 11, 454, 100] },
+  { str: '-', transform: [0, 0, 0, 11, 450, 100] },
+  { str: '07', transform: [0, 0, 0, 11, 439, 100] },
+  { str: '-', transform: [0, 0, 0, 11, 435, 100] },
+  { str: '123456', transform: [0, 0, 0, 11, 403, 100] },
+];
+assert(reorderLtrRuns(caseNumber).map(i => i.str).join('') === '123456-01-26',
+  'a hyphenated number split across items must read left-to-right');
+
+const mixed = [
+  { str: 'תיק', transform: [0, 0, 0, 11, 467, 100] },
+  { str: '15', transform: [0, 0, 0, 11, 454, 100] },
+  { str: 'ימים', transform: [0, 0, 0, 11, 430, 100] },
+];
+assert(reorderLtrRuns(mixed).map(i => i.str).join(' ') === 'תיק 15 ימים',
+  'Hebrew around a lone number keeps its order');
+
 console.log('All tests passed.');
