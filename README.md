@@ -129,6 +129,22 @@ as a heading. Those are escaped. A dash is not: a dash-prefixed line usually is 
 it looks like, and escaping them flattened a syllabus into paragraphs. A line that opens
 *and* closes with one (`- עמוד 1 -`) is decoration, and is escaped.
 
+## Numbering
+
+A renderer honours the number a list opens with and counts everything after it from
+there. So `1.` `1.` `2.` `3.` — a letter numbering its sections and its clauses
+separately — renders as 1, 2, 3, 4, and every clause number in the document shifts. The
+same happens wherever numbering restarts under a heading or skips a reserved number.
+
+Renumbering a legal document changes what it says: its clauses are cross-referenced by
+number, inside the document and outside it. A run therefore stays a real list only when
+the renderer would arrive at the same numbers. Otherwise its numbering is escaped and
+reads exactly as the page does.
+
+A clause running past the foot of a page is put back together too. Pages are read one at
+a time, so the tail arrives tagged as a list item whose label stayed behind — which
+rendered as a bullet dropped into the middle of a sentence.
+
 ## Tables
 
 A PDF stores a table as ruled lines and positioned glyphs. Nothing in the file says

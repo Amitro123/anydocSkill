@@ -89,7 +89,7 @@ function labelRuns(entries) {
   return runs;
 }
 
-function renderList(node, byId, used) {
+function renderList(node, byId, used, blocks, meta) {
   const entries = (node.children || []).filter(c => c.role === 'LI').map(li => {
     const parts = li.children || [];
     const label = parts.filter(p => p.role === 'Lbl').map(p => nodeText(p, byId, used)).join(' ').trim();
@@ -106,13 +106,22 @@ function renderList(node, byId, used) {
 
   if (!entries.length) return [];
 
-  return labelRuns(entries).map(run => {
+  // An item split by a page break leaves its label behind on the page before, so the
+  // tail arrives as an LI with an empty Lbl. Rendered as a bullet it invents a list
+  // item in the middle of a sentence; it is the previous item still going.
+  const tail = !entries[0].label && entries.some(e => e.label) ? entries.shift() : null;
+  if (tail && !blocks.length) meta.continuesPrevious = true;
+
+  const rendered = tail ? [tail.body] : [];
+  if (!entries.length) return rendered;
+
+  return rendered.concat(labelRuns(entries).map(run => {
     if (run.ordered) {
       const start = numericLabel(run.entries[0].label);
       return run.entries.map((e, i) => `${start + i}. ${e.body}`).join('\n');
     }
     return run.entries.map(e => `- ${[e.label, e.body].filter(Boolean).join(' ')}`).join('\n');
-  });
+  }));
 }
 
 /**
@@ -147,7 +156,7 @@ function renderTable(node, byId, used) {
     .map(cells => `| ${cells.join(' | ')} |`).join('\n');
 }
 
-function renderNode(node, byId, blocks, used) {
+function renderNode(node, byId, blocks, used, meta) {
   if (!node) return;
   const role = node.role;
 
@@ -160,7 +169,7 @@ function renderNode(node, byId, blocks, used) {
   }
 
   if (role === 'L') {
-    blocks.push(...renderList(node, byId, used));
+    blocks.push(...renderList(node, byId, used, blocks, meta));
     return;
   }
 
@@ -176,7 +185,7 @@ function renderNode(node, byId, blocks, used) {
     return;
   }
 
-  (node.children || []).forEach(child => renderNode(child, byId, blocks, used));
+  (node.children || []).forEach(child => renderNode(child, byId, blocks, used, meta));
 }
 
 const SAME_LINE = 2;  // baselines within this many units are one line
@@ -237,13 +246,15 @@ async function structuredMarkdown(doc, keep = () => true) {
 
     const blocks = [];
     const used = new Set();
-    renderNode(tree, byId, blocks, used);
+    const meta = {};
+    renderNode(tree, byId, blocks, used, meta);
 
     total += items.filter(i => typeof i.str === 'string').reduce((n2, i) => n2 + i.str.length, 0);
     tagged += blocks.join('').length;
 
-    pages.push({ blocks, ...untaggedLines(items, byId, used) });
+    pages.push({ blocks, continuesPrevious: !!meta.continuesPrevious, ...untaggedLines(items, byId, used) });
   }
+  rejoinAcrossPages(pages);
 
   // Coverage still measures the tree alone: it decides whether to trust the tree's
   // paragraph boundaries, which recovered furniture says nothing about.
@@ -251,6 +262,22 @@ async function structuredMarkdown(doc, keep = () => true) {
     markdown: assemble(pages).replace(/\n{3,}/g, '\n\n').trim() + '\n',
     coverage: total ? tagged / total : 0,
   };
+}
+
+/**
+ * Put a sentence a page break split back together.
+ *
+ * Pages are read one at a time, so an item running past the foot of a page arrives as
+ * two blocks — the tags say where the page ended, not where the sentence did. The tail
+ * has already been recognised as a continuation rather than a new item, so this is a
+ * join, not a guess.
+ */
+function rejoinAcrossPages(pages) {
+  for (let n = 1; n < pages.length; n++) {
+    const previous = pages[n - 1].blocks;
+    if (!pages[n].continuesPrevious || !previous.length || !pages[n].blocks.length) continue;
+    previous[previous.length - 1] += ` ${pages[n].blocks.shift()}`;
+  }
 }
 
 // Only the untagged text can be furniture here — the tree already told us the rest is
@@ -269,4 +296,4 @@ function assemble(pages) {
     .join('\n\n');
 }
 
-module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel, untaggedLines, assemble, renderTable } };
+module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel, untaggedLines, assemble, renderTable, renderList, rejoinAcrossPages } };

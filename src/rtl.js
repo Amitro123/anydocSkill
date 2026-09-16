@@ -66,7 +66,7 @@ function detectVisualOrder(text) {
 const RLM = '‏';  // U+200F RIGHT-TO-LEFT MARK
 const RTL_LETTER = /[֐-׿؀-ۿݐ-ݿ]/;
 // A leading marker Markdown reads structurally: a mark placed before it stops it parsing.
-const MARKDOWN_MARKER = /^(\s*(?:[-*+]|\d+[.)]|#{1,6}|>)\s+)?/;
+const MARKDOWN_MARKER = /^(\s*(?:[-*+]|\d+\\?[.)]|#{1,6}|>)\s+)?/;
 
 /**
  * Force RTL base direction line by line with U+200F.

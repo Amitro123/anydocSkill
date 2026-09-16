@@ -88,6 +88,26 @@ assert(promoteHeadings('# כותרת\n\n**מודגש**\n\nגוף') === '# כות
 assert(promoteHeadings('**חלק **מודגש** ממשפט**\n\nגוף').startsWith('**חלק '),
   'partial emphasis inside a paragraph is never a heading');
 
+// preserveNumbering — a renderer counts a list from its first number, so numbering that
+// does not run straight comes out silently renumbered.
+const { preserveNumbering } = require('./numbering');
+
+// A demand letter numbers its sections and its clauses separately, so the run reads
+// 1, 1, 2, 3 and a renderer would print 1, 2, 3, 4 — shifting every clause it cites.
+const letterRun = '1. עובדות\n\n1. ביום 6 במרץ\n\n2. לאחר משא ומתן\n\n3. מועד תחילת העבודה';
+assert(preserveNumbering(letterRun) ===
+  '1\\. עובדות\n\n1\\. ביום 6 במרץ\n\n2\\. לאחר משא ומתן\n\n3\\. מועד תחילת העבודה',
+  'numbering a renderer would change must be escaped, so the page numbers survive');
+
+assert(preserveNumbering('1. אחד\n\n2. שניים\n\n3. שלושה') === '1. אחד\n\n2. שניים\n\n3. שלושה',
+  'a run a renderer would number identically stays a list');
+assert(preserveNumbering('72. שבעים ושתיים\n\n73. שבעים ושלוש').startsWith('72. '),
+  'a list opening at 72 renders from 72, so it needs no escaping');
+assert(preserveNumbering('5. חמש\n\nפסקה\n\n6. שש') === '5. חמש\n\nפסקה\n\n6. שש',
+  'a paragraph closes the list, so each number opens its own and is rendered as written');
+assert(preserveNumbering('2. שתיים\n\n4. ארבע') === '2\\. שתיים\n\n4\\. ארבע',
+  'a gap in the sequence would be closed up by the renderer');
+
 // parseFrontMatter
 const parsed = parseFrontMatter(output);
 assert(parsed.meta.dir === 'rtl', 'front-matter dir should parse');
@@ -352,6 +372,34 @@ assert(pdfInternals.renderTable(tagged, cellItems, new Set()).split('\n')[2] ===
 const layout = { role: 'Table', children: [row(['e'], ['f']), row(['e'], ['f'])] };
 assert(pdfInternals.renderTable(layout, cellItems, new Set()) === null,
   'a grid holding no text is positioning art, not a table');
+
+// An item running past the foot of a page leaves its label behind, so the tail arrives
+// tagged LI with an empty Lbl — a bullet there lands in the middle of a sentence.
+const item = (lbl, bodyId) => ({
+  role: 'LI',
+  children: [
+    { role: 'Lbl', children: lbl ? [{ type: 'content', id: lbl }] : [] },
+    { role: 'LBody', children: [{ type: 'content', id: bodyId }] },
+  ],
+});
+const listItems = new Map([
+  ['n9', [box(60, 70, '9.', 90)]],
+  ['tail', [box(40, 90, 'אוטומציה', 99)]],
+  ['nine', [box(40, 90, 'ביום 27 באוגוסט', 90)]],
+]);
+const meta = {};
+const continued = pdfInternals.renderList(
+  { role: 'L', children: [item(null, 'tail'), item('n9', 'nine')] },
+  listItems, new Set(), [], meta);
+
+assert(continued[0] === 'אוטומציה', 'a tail with no label is the previous item continuing');
+assert(meta.continuesPrevious === true, 'and is flagged so the page before can take it back');
+assert(continued[1] === '9. ביום 27 באוגוסט', 'the labelled items after it are unaffected');
+
+const split = [{ blocks: ['...הועסק כמפתח'] }, { blocks: ['אוטומציה — היכן'], continuesPrevious: true }];
+pdfInternals.rejoinAcrossPages(split);
+assert(split[0].blocks[0] === '...הועסק כמפתח אוטומציה — היכן', 'the sentence is put back together');
+assert(split[1].blocks.length === 0, 'and is not left behind on the next page too');
 
 // A page must be assembled by position too: one producer emitted a newsletter's
 // middle section first, then its footer, then its header.
