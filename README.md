@@ -54,7 +54,7 @@ node src/convert.js report.docx --format html --out-dir ./out
 
 | Flag | |
 |---|---|
-| `--verify` | Check the conversion against the page it came from — [see below](#checking-a-conversion) |
+| `--verify` | Check the conversion against the document it came from — the full check on PDFs, renderer-only on other formats ([see below](#checking-a-conversion)) |
 | `--pages` | Convert part of a PDF |
 | `--ingest` | Add knowledge-base metadata — [see below](#knowledge-base-ingest) |
 | `--force` | Write output that failed the scrambled-text check |
@@ -242,6 +242,25 @@ quiet ones — a dropped footer, a clause renumbered by one.
 What it does not check: how words were assembled from the glyphs, since it reads lines
 through the same joining the converter does. It checks that the lines the extractor read
 reach the reader intact.
+
+**On anything but a PDF the check is narrower.** Only a PDF can be read back
+independently, so only a PDF is checked against the document itself. For every other
+format there is no second source to read: the extractor's own output stands in for the
+document, and `--verify` compares that against the finished page. It still catches what
+the renderer does to the text — markup consumed, a list renumbered, a marker read back
+as a word — but it cannot catch a line the extractor dropped, because a line missing
+from the extraction is missing from both sides. A clean `--verify` on a `.docx` says the
+rendering is faithful to the extraction, not that the extraction was complete. The
+report says which of the two it did:
+
+```
+Verified deck.pptx: 5 extracted lines reached the output (no page to read back — extraction itself is unchecked).
+  No text lost, no number changed.
+```
+
+This is why a `.docx` is still worth converting from over a PDF of the same document —
+it extracts more reliably in the first place — and why the PDF path is the one with a
+real check behind it.
 
 ## Regression corpus
 
