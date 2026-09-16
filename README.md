@@ -31,7 +31,8 @@ node src/convert.js report.docx --format html --out-dir ./out
 ```
 
 `--format` is `md`, `html`, or `both` (default). Output lands next to the input unless
-`--out-dir` is given. `--force` writes output that failed the scrambled-text check.
+`--out-dir` is given. `--force` writes output that failed the scrambled-text check, and
+`--verify` checks the conversion against the page it came from — see below.
 `--ingest` adds knowledge-base metadata — see below.
 
 `--pages` selects part of a PDF: `--pages 1`, `--pages 2-4`, `--pages 1,5-7`. Pages are
@@ -160,6 +161,56 @@ as-is — except for a grid holding no text, which is how a hand-formatted page 
 images rather than a table worth rendering.
 
 Markdown has no row or column spans, so a table needing either is left as paragraphs.
+
+## Checking a conversion
+
+`--verify` reads the page text straight back out of the PDF and compares it with the
+finished HTML turned into the words a reader would see:
+
+```bash
+node src/convert.js letter.pdf --verify
+```
+
+```
+Verified letter.pdf: 277 lines of page text.
+  2 repeated header/footer line(s) dropped, as intended:
+    עתיד האוטומציה: הדרכות | ייעוץ
+  No text lost, no number changed.
+```
+
+It reports four things: lines the page shows and the output does not, lines that kept
+every word but changed order (a table row read across rather than down), header and
+footer lines dropped on purpose, and numbers whose tallies differ — which is how a
+renumbered list shows up, since a renderer generates those numbers rather than storing
+them. Exit code is 3 when text is missing or a number changed.
+
+Every defect this converter has had was visible this way. Finding them meant reading a
+converted document against its original by eye, which does not scale and misses the
+quiet ones — a dropped footer, a clause renumbered by one.
+
+What it does not check: how words were assembled from the glyphs, since it reads lines
+through the same joining the converter does. It checks that the lines the extractor read
+reach the reader intact.
+
+## Regression corpus
+
+The generated fixtures in `test/` pin the behaviours someone thought to write down. Real
+documents are what actually find defects — every one so far came from a PDF nobody had
+tried, and fixing one silently broke another twice.
+
+Keep those documents **outside the repository**: they are invoices, letters and filings
+carrying names, ID numbers and medical details that have no business in a public repo or
+in anyone's git history. Point `ANYDOC_CORPUS` at a folder of them and the snapshots are
+kept beside them.
+
+```bash
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus          # compare against snapshots
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus -- -u    # record the current output
+```
+
+Each snapshot holds the Markdown and the verification report. A snapshot is not a claim
+that the output is right — it records what it was. Read the diff when one changes: that
+is the review, and the point of the suite.
 
 ## Knowledge-base ingest
 

@@ -239,8 +239,118 @@ function writeMultiPagePdf(dir, count = 3) {
   return file;
 }
 
+/**
+ * A PDF built from explicit page contents, so a test can pose the exact page shape a
+ * real document used to break the converter with.
+ *
+ * @param {string[][]} pages - Per page, `[x, y, text]` triples
+ */
+function writeLaidOutPdf(dir, pages, name) {
+  const streams = pages.map(lines => lines
+    .map(([x, y, text]) => `BT /F1 10 Tf ${x} ${y} Td (${text}) Tj ET`)
+    .join('\n'));
+
+  const pageId = n => 4 + (n - 1) * 2;
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    `<</Type/Pages/Kids[${pages.map((_, i) => `${pageId(i + 1)} 0 R`).join(' ')}]/Count ${pages.length}>>`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+  ];
+  streams.forEach(stream => objects.push(
+    `<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>>>` +
+    `/Contents ${objects.length + 2} 0 R>>`,
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`
+  ));
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+
+  const file = path.join(dir, `${name}.pdf`);
+  fs.writeFileSync(file, pdf, 'latin1');
+  return file;
+}
+
+// Text placed past the right edge of the MediaBox is clipped before it ever reaches
+// the extractor, which silently truncates a fixture's lines. Helvetica at 10pt runs to
+// roughly this, so a line is kept inside the page.
+const CHARS_PER_LINE = 48;
+
+// An invoice: a table whose first column is headed "#", a footer written between
+// dashes, and a line of prose that must not be swept into the table.
+const writeInvoicePdf = dir => writeLaidOutPdf(dir, [[
+  [72, 720, 'Invoice 40243'],
+  [72, 640, '#'], [110, 640, 'Item'], [300, 640, 'Qty'], [430, 640, 'Total'],
+  [72, 620, '1'], [110, 620, 'Consulting'], [300, 620, '1.00'], [430, 620, '1,200.00'],
+  [72, 560, 'Thank you for your business.'],
+  [72, 60, '- page 1 -'],
+]], 'invoice');
+
+/**
+ * Two tickets from one order.
+ *
+ * The pages are copies of a template, so nearly everything on them repeats and none of
+ * it is a header. A fixture with only a line or two in common would not pose that: the
+ * filter is meant to drop the lines that repeat, and only the share of the page they
+ * cover says this is a template rather than furniture.
+ */
+function writeTicketsPdf(dir) {
+  const shared = [
+    'Ticket number', 'Order ATC-4471', 'Payment status', 'Paid',
+    'Saturday at the park', '15 August 2026, 09:00 to 12:30',
+    'Park entrance, Gate B', 'Please show this ticket on arrival',
+  ];
+  const page = (code, admission) => [
+    ...shared.map((text, i) => [72, 720 - i * 40, text]),
+    [72, 720 - shared.length * 40, code],
+    [72, 680 - shared.length * 40, admission],
+  ];
+
+  return writeLaidOutPdf(dir,
+    [page('AAAA-1111', 'Adult admission'), page('BBBB-2222', 'Child admission')],
+    'tickets');
+}
+
+/**
+ * A letter numbering its sections and its clauses separately.
+ *
+ * The run reads 1, 1, 2, 3, so a renderer counting from the first number prints
+ * 1, 2, 3, 4 and shifts every clause. Each clause wraps onto a second line so the
+ * paragraph detector has a body gap to measure and keeps the clauses apart.
+ */
+function writeNumberedPdf(dir) {
+  // Paragraphs are inferred from line gaps, so most gaps have to be the within-clause
+  // one for the between-clause gap to stand out against it. Each clause therefore wraps
+  // onto three lines, as a real clause does.
+  const blocks = [
+    ['1. Background to this letter'],
+    ['1. On 6 March your recruiter first wrote', 'to our client about the role, and', 'a meeting followed that week.'],
+    ['2. An agreement was signed on the', '14th of April, setting out the', 'position and the start date.'],
+    ['3. The start date was 11 May, and', 'our client gave notice at his', 'previous employer the same day.'],
+  ];
+
+  const lines = [];
+  let y = 720;
+  for (const block of blocks) {
+    for (const text of block) {
+      lines.push([72, y, text.slice(0, CHARS_PER_LINE)]);
+      y -= 14;
+    }
+    y -= 32;
+  }
+  return writeLaidOutPdf(dir, [lines], 'numbered');
+}
+
 module.exports = {
   HEBREW, tempDir, EMISSION_ORDERS,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
-  writeMultiPagePdf,
+  writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
 };

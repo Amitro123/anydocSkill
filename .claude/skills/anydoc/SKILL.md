@@ -18,10 +18,16 @@ Unless the user already named a format, ask with `AskUserQuestion`:
 Then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/src/convert.js" <input-file> --format both|md|html [--out-dir <dir>]
+node "${CLAUDE_PLUGIN_ROOT}/src/convert.js" <input-file> --format both|md|html --verify [--out-dir <dir>]
 ```
 
 For part of a PDF, add `--pages 1`, `--pages 2-4` or `--pages 1,5-7`. PDFs only.
+
+Always pass `--verify` on a PDF. It reads the page text back out and compares it with
+the rendered output, and prints what is missing or changed. Report what it says rather
+than handing over a conversion you have not checked: text a page shows and the output
+does not is the failure people do not notice. Exit code 3 means it found something —
+the files are still written, so read the report and say what it found.
 
 Output lands next to the input unless `--out-dir` is given.
 

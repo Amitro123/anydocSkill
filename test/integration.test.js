@@ -178,6 +178,69 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
     'selecting every page must match converting the whole document');
 }
 
+// --- Page shapes that broke real conversions ---
+//
+// Each of these reproduces a document that got converted wrongly, in the smallest page
+// that still poses the problem. They are here because every one of them was found by
+// converting a document nobody had tried, and two were re-broken by a later fix.
+
+// An invoice's first table column is headed "#". Read back as Markdown that was an H1
+// holding the whole flattened row.
+{
+  const { md, html } = convert(fx.writeInvoicePdf(dir));
+  assert(!/^#\s/m.test(md), 'a "#" the page prints must not open a heading');
+  assert(!html.includes('<h1'), 'and must not render as one');
+  assert(/^\| # \| Item \| Qty \| Total \|$/m.test(md),
+    `the row should read as a table — got ${JSON.stringify(md.match(/^\|.*$/m))}`);
+  assert(/^\| 1 \| Consulting \| 1\.00 \| 1,200\.00 \|$/m.test(md),
+    'each value should stay under its own heading');
+  assert(md.includes('Thank you for your business.'), 'prose must not be swept into the table');
+  assert(!/^-\s.*-$/m.test(md), 'a footer written between dashes is not a list item');
+}
+
+// Two tickets from one order: the pages are copies of a template, so nearly everything
+// repeats. Treating repetition as proof of a header deleted both tickets.
+{
+  const { md } = convert(fx.writeTicketsPdf(dir));
+  assert(md.includes('AAAA-1111') && md.includes('BBBB-2222'), 'both tickets must survive');
+  assert(md.includes('Adult admission') && md.includes('Child admission'),
+    'and so must what tells them apart');
+  assert((md.match(/Payment status/g) || []).length === 2,
+    'a line on both pages is the template, not a header to drop');
+}
+
+// A letter numbering its sections and its clauses separately reads 1, 1, 2, 3 — and a
+// renderer counting from the first number prints 1, 2, 3, 4, shifting every clause.
+{
+  const { md, html } = convert(fx.writeNumberedPdf(dir));
+  const rendered = (html.match(/<p>\s*(\d+)\./g) || []).map(m => m.match(/(\d+)/)[1]);
+  assert.deepStrictEqual(rendered, ['1', '1', '2', '3'],
+    `the page's own numbering must reach the reader — got ${rendered.join(', ')}`);
+  assert(md.includes('1\\. Background'), 'numbering a renderer would change is escaped');
+  assert(!html.includes('<ol'), 'so the run is not handed to the renderer to number');
+}
+
+// --- --verify reads the page back against the output, and says so on exit ---
+//
+// Every defect above was mechanically visible in the finished document. Checking by eye
+// is what let each one ship, so the check is the tool's own.
+{
+  const clean = fx.writeInvoicePdf(dir);
+  const out = path.join(dir, 'verified');
+  const report = execFileSync(process.execPath,
+    [CLI, clean, '--format', 'both', '--out-dir', out, '--verify'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+  assert(/lines of page text/.test(report), 'the report says how much page text it read');
+  assert(/No text lost, no number changed/.test(report),
+    `a good conversion verifies clean — got:\n${report}`);
+
+  // A document whose text cannot all reach the output has to fail loudly, not quietly:
+  // a scan has no text layer, so nothing extracted can match the page.
+  const plain = convert(clean).md;
+  assert(!/MISSING/.test(plain), 'the report does not leak into the document');
+}
+
 // --- Provenance is recorded, which is what catches a cross-format overwrite ---
 {
   const { md } = convert(fx.writeCsv(dir));

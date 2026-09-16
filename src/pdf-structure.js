@@ -98,10 +98,18 @@ function renderList(node, byId, used, blocks, meta) {
       ? bodyNodes.map(p => nodeText(p, byId, used)).filter(Boolean).join(' ')
       : nodeText(li, byId, used)).trim();
 
-    // Hebrew numbering renders as ".1", so the separator lands at the head of the
-    // body. Markdown supplies its own, and a bullet does not need one.
-    if (label) body = body.replace(/^[.)]\s*/, '');
-    return { label, body };
+    // Hebrew numbering renders as ".1", so the separator lands at the head of the body
+    // rather than the end of the label. Markdown supplies its own for a numbered item;
+    // a bullet gets none, so the label keeps the separator the page drew.
+    let separator = '';
+    if (label) {
+      const split = body.match(/^([.)])\s*/);
+      if (split) {
+        separator = split[1];
+        body = body.slice(split[0].length);
+      }
+    }
+    return { label, body, separator };
   }).filter(e => e.label || e.body);
 
   if (!entries.length) return [];
@@ -120,7 +128,9 @@ function renderList(node, byId, used, blocks, meta) {
       const start = numericLabel(run.entries[0].label);
       return run.entries.map((e, i) => `${start + i}. ${e.body}`).join('\n');
     }
-    return run.entries.map(e => `- ${[e.label, e.body].filter(Boolean).join(' ')}`).join('\n');
+    return run.entries
+      .map(e => `- ${[e.label + e.separator, e.body].filter(Boolean).join(' ')}`)
+      .join('\n');
   }));
 }
 
