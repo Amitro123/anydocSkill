@@ -130,17 +130,18 @@ function renderNode(node, byId, blocks) {
 }
 
 /**
- * @param {object} pdfjs - The loaded pdf.js module
  * @param {object} doc - An open PDFDocumentProxy
+ * @param {(n: number) => boolean} [keep] - Which 1-indexed pages to include
  * @returns {Promise<{markdown: string, coverage: number}>} coverage is the share of
  *   page text the structure tree accounted for, used to decide whether to trust it.
  */
-async function structuredMarkdown(doc) {
+async function structuredMarkdown(doc, keep = () => true) {
   const blocks = [];
   let tagged = 0;
   let total = 0;
 
   for (let n = 1; n <= doc.numPages; n++) {
+    if (!keep(n)) continue;
     const page = await doc.getPage(n);
     const tree = await page.getStructTree();
     if (!tree) continue;

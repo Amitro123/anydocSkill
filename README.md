@@ -34,6 +34,10 @@ node src/convert.js report.docx --format html --out-dir ./out
 `--out-dir` is given. `--force` writes output that failed the scrambled-text check.
 `--ingest` adds knowledge-base metadata — see below.
 
+`--pages` selects part of a PDF: `--pages 1`, `--pages 2-4`, `--pages 1,5-7`. Pages are
+numbered from 1, and it applies to PDFs only — other formats have no page numbers, so
+the flag is refused rather than silently ignored.
+
 As a skill, `/anydoc <file>` — it asks which format you want unless your request
 already names one.
 
@@ -150,8 +154,11 @@ Four decisions look like they could be simplified. They cannot:
 - **List numbering is copied, never regenerated.** Markdown renumbers ordered lists, so
   one is only emitted where the document's own labels match what Markdown would render.
   Legal clause numbering must survive exactly.
-- **Left-to-right runs inside RTL text are reordered by x.** pdf.js emits items
-  right-to-left; a hyphenated case number split across items arrives backwards otherwise.
+- **RTL lines are ordered by position, never by the order items arrive in.** Producers
+  disagree: Word emits an RTL line right-to-left, other tools emit it left-to-right.
+  Trusting array order reverses every word of a line from the second kind.
+- **Left-to-right runs inside RTL text are then reordered by ascending x.** A hyphenated
+  case number split across items arrives backwards otherwise.
 
 Every extraction is checked for visual-order scrambling before anything is written.
 

@@ -170,4 +170,30 @@ const { _internals: pptxInternals } = require('./pptx-extract');
 assert(pptxInternals.LABELS.en.slide(3) === 'Slide 3', 'English decks use English labels');
 assert(pptxInternals.LABELS.he.slide(3) === 'שקופית 3', 'Hebrew decks keep Hebrew labels');
 
+// An RTL line must be ordered by position, not by the order the producer emitted it.
+// Word writes such a line right-to-left; other tools write it left-to-right, and
+// trusting array order reverses every word of the second kind.
+const { _internals: geo } = require('./pdf-extract');
+const ltrEmitted = [                       // ascending x: emitted left-to-right
+  { str: 'טוקנים', transform: [0, 0, 0, 11, 462, 365] },
+  { str: 'כלכלת',  transform: [0, 0, 0, 11, 716, 365] },
+];
+assert(geo.joinOneLine(ltrEmitted) === 'כלכלת טוקנים',
+  'an RTL line emitted left-to-right must still read right-to-left');
+
+const rtlEmitted = [...ltrEmitted].reverse();   // descending x: already reading order
+assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
+  'the same line emitted right-to-left must read identically');
+
+// --pages accepts single pages, ranges and lists, and rejects nonsense
+const { _internals: cli } = require('./convert-args');
+assert([...cli.parsePageSpec('1')].join() === '1', 'a single page parses');
+assert([...cli.parsePageSpec('2-4')].join() === '2,3,4', 'a range expands');
+assert([...cli.parsePageSpec('1,5-6')].join() === '1,5,6', 'a list of both parses');
+for (const bad of ['0', '3-1', 'x', '']) {
+  let threw = false;
+  try { cli.parsePageSpec(bad); } catch { threw = true; }
+  assert(threw, `"${bad}" must be rejected as a page spec`);
+}
+
 console.log('All tests passed.');

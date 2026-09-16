@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node convert.js <input-file> [--format md|html|both] [--out-dir <dir>]
- *                                [--ingest] [--force]
+ *                                [--pages <spec>] [--ingest] [--force]
  *
  * Exit codes are part of the interface, so callers in any language can tell a
  * scrambled-text rejection from an ordinary failure without parsing stderr:
@@ -20,12 +20,14 @@ const path = require('path');
 const fs = require('fs');
 const { addRtlSupport, detectVisualOrder } = require('./rtl');
 const { renderHtml } = require('./render-html');
+const { parsePageSpec } = require('./convert-args');
 
 function parseArgs(argv) {
-  const args = { format: 'both', outDir: null, input: null, force: false, ingest: false };
+  const args = { format: 'both', outDir: null, input: null, force: false, ingest: false, pages: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--format') args.format = argv[++i];
     else if (argv[i] === '--out-dir') args.outDir = argv[++i];
+    else if (argv[i] === '--pages') args.pages = parsePageSpec(argv[++i]);
     else if (argv[i] === '--force') args.force = true;
     else if (argv[i] === '--ingest') args.ingest = true;
     else if (!args.input) args.input = argv[i];
@@ -33,8 +35,14 @@ function parseArgs(argv) {
   return args;
 }
 
-async function toMarkdown(inputPath) {
+async function toMarkdown(inputPath, pages = null) {
   const ext = path.extname(inputPath).toLowerCase();
+
+  // Only PDFs are paginated here. Silently ignoring the flag on anything else
+  // would hand back the whole document as though the selection had applied.
+  if (pages && ext !== '.pdf') {
+    throw new Error(`--pages only applies to PDFs; ${ext || 'this input'} has no page numbers.`);
+  }
 
   // Text input needs no conversion — go straight to RTL post-processing. anydoc
   // rejects .txt outright, and plain text is the one thing it never needs to parse.
@@ -46,7 +54,7 @@ async function toMarkdown(inputPath) {
   // beyond repair. pdf.js returns logical order, so PDFs go through it instead.
   if (ext === '.pdf') {
     const { pdfToMarkdown } = require('./pdf-extract');
-    return pdfToMarkdown(inputPath);
+    return pdfToMarkdown(inputPath, { pages });
   }
 
   // anydoc flattens a deck into one continuous run, losing slide boundaries.
@@ -67,14 +75,14 @@ async function toMarkdown(inputPath) {
   return toMarkdown(inputPath);
 }
 
-async function convert({ input, format, outDir, force, ingest }) {
+async function convert({ input, format, outDir, force, ingest, pages }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
 
   const title = path.basename(input, path.extname(input));
   const dir = outDir || path.dirname(input);
   fs.mkdirSync(dir, { recursive: true });
 
-  const raw = await toMarkdown(input);
+  const raw = await toMarkdown(input, pages);
 
   // A PDF that was scanned but never OCR'd has no text layer, so extraction
   // succeeds and returns nothing. Writing an empty document without a word about
@@ -142,10 +150,16 @@ async function convert({ input, format, outDir, force, ingest }) {
   written.forEach(p => console.log(`Written: ${p}`));
 }
 
-const args = parseArgs(process.argv.slice(2));
+let args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (err) {
+  console.error(err.message);
+  process.exit(EXIT_FAILURE);
+}
 if (!args.input) {
   console.error('Usage: node convert.js <input-file> [--format md|html|both] ' +
-                '[--out-dir <dir>] [--ingest] [--force]');
+                '[--out-dir <dir>] [--pages <spec>] [--ingest] [--force]');
   process.exit(EXIT_FAILURE);
 }
 convert(args).catch(err => {

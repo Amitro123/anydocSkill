@@ -21,6 +21,8 @@ Then run:
 node "${CLAUDE_PLUGIN_ROOT}/src/convert.js" <input-file> --format both|md|html [--out-dir <dir>]
 ```
 
+For part of a PDF, add `--pages 1`, `--pages 2-4` or `--pages 1,5-7`. PDFs only.
+
 Output lands next to the input unless `--out-dir` is given.
 
 `${CLAUDE_PLUGIN_ROOT}` resolves to the installed plugin directory. When working inside

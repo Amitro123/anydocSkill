@@ -77,8 +77,13 @@ function reorderLtrRuns(items) {
 // PDFs usually space words by positioning glyphs rather than emitting space
 // characters, so word breaks have to be read back from the gaps between items.
 function joinOneLine(rawItems) {
+  // Producers disagree about the order they emit items in: Word writes an RTL line
+  // right-to-left, other tools write it left-to-right. Array order is therefore not
+  // reading order, and trusting it reverses the words of every Hebrew line from the
+  // second kind of producer. Position is the only reliable source, so an RTL line is
+  // ordered by descending x — a no-op when the producer already emitted it that way.
   const items = HEBREW_OR_ARABIC.test(rawItems.map(i => i.str).join(''))
-    ? reorderLtrRuns(rawItems)
+    ? reorderLtrRuns([...rawItems].sort((a, b) => b.transform[4] - a.transform[4]))
     : rawItems;
   let text = '';
 
@@ -203,14 +208,29 @@ const MIN_STRUCTURE_COVERAGE = 0.6;
 
 /**
  * @param {string} filePath - Path to a PDF
+ * @param {object} [opts]
+ * @param {Set<number>} [opts.pages] - 1-indexed pages to keep; all pages when absent
  * @returns {Promise<string>} Markdown
  */
-async function pdfToMarkdown(filePath) {
+async function pdfToMarkdown(filePath, opts = {}) {
+  const { pages: wanted = null } = opts;
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
 
+  if (wanted) {
+    const missing = [...wanted].filter(n => n < 1 || n > doc.numPages);
+    if (missing.length) {
+      await doc.cleanup();
+      throw new Error(
+        `This PDF has ${doc.numPages} page${doc.numPages === 1 ? '' : 's'}; ` +
+        `no page ${missing.join(', ')}.`
+      );
+    }
+  }
+  const keep = n => !wanted || wanted.has(n);
+
   const { structuredMarkdown } = require('./pdf-structure');
-  const structured = await structuredMarkdown(doc);
+  const structured = await structuredMarkdown(doc, keep);
   if (structured.coverage >= MIN_STRUCTURE_COVERAGE) {
     await doc.cleanup();
     return structured.markdown;
@@ -218,6 +238,7 @@ async function pdfToMarkdown(filePath) {
 
   const pages = [];
   for (let n = 1; n <= doc.numPages; n++) {
+    if (!keep(n)) continue;
     const page = await doc.getPage(n);
     const { items } = await page.getTextContent();
     pages.push(linesToParagraphs(itemsToLines(items)));
@@ -237,4 +258,5 @@ module.exports = {
   reorderLtrRuns,
   joinItems,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
+  _internals: { joinOneLine },
 };
