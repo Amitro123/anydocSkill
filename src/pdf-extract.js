@@ -128,6 +128,26 @@ function joinItems(items) {
   return lines.map(joinOneLine).filter(Boolean).join(' ');
 }
 
+/**
+ * Escape a Markdown block marker a page happens to open a line with.
+ *
+ * Extractors return plain text, and that text is read back as Markdown. An invoice
+ * whose first table column is headed `#` therefore comes back as a heading, and the
+ * document grows structure the page never had.
+ *
+ * `#` and `>` are escaped outright: page text never means them as Markdown. A dash is
+ * left alone, because a dash-prefixed line usually is the list it looks like and
+ * escaping those flattened a syllabus into paragraphs — unless the line closes with
+ * the same character, which is decoration (`- עמוד 1 -`) rather than a list item, as
+ * no list item ends with its own marker.
+ */
+function escapeBlockMarker(text) {
+  const decoration = text.match(/^(\s*)([-*+])(?=\s).*\2\s*$/);
+  if (decoration) return text.replace(/^(\s*)([-*+])/, '$1\\$2');
+
+  return text.replace(/^(\s*)(#{1,6}|>)(?=\s|$)/, '$1\\$2');
+}
+
 function lineY(items) {
   return items[0].transform[5];
 }
@@ -209,6 +229,81 @@ function orderLines(lines, rtl) {
   return [...orderLines(first, rtl), ...orderLines(second, rtl)];
 }
 
+const MIN_TABLE_ROWS = 2;      // a header and one row of data
+const MIN_TABLE_COLUMNS = 3;   // two aligned runs are as likely to be a label and a value
+const CELL_GAP_RATIO = 0.6;    // a gap this many font sizes wide separates cells, not words
+
+const itemLeft = item => item.transform[4];
+const itemRight = item => item.transform[4] + (item.width || 0);
+const cellCentre = cell => (itemLeft(cell[0]) + itemRight(cell[cell.length - 1])) / 2;
+
+/**
+ * Split one line into cells at the gaps too wide to be word spacing.
+ *
+ * Cells arrive in reading order — rightmost first in an RTL table — so the first
+ * Markdown column is the one nearest the reader's starting edge.
+ */
+function lineToCells(items, rtl) {
+  // Producers pad a row with whitespace items wide enough to span the gap between
+  // columns. Keeping them would bridge every gap and read the row as a single cell.
+  const sorted = items.filter(i => i.str.trim()).sort((a, b) =>
+    rtl ? itemLeft(b) - itemLeft(a) : itemLeft(a) - itemLeft(b));
+  if (!sorted.length) return [];
+
+  const cells = [[sorted[0]]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1];
+    const item = sorted[i];
+    const gap = rtl ? itemLeft(prev) - itemRight(item) : itemLeft(item) - itemRight(prev);
+    const fontSize = Math.abs(item.transform[3]) || 10;
+
+    if (gap > fontSize * CELL_GAP_RATIO) cells.push([item]);
+    else cells[cells.length - 1].push(item);
+  }
+  // Each cell is ordered rightmost-first for RTL; joinOneLine re-sorts by position.
+  return cells;
+}
+
+/**
+ * Read a run of lines starting at `start` as a table, or return null.
+ *
+ * A PDF records a table as ruled lines and positioned glyphs, with nothing saying
+ * which value belongs under which heading — that has to be recovered from where the
+ * cells sit. Recovering it wrongly files a number under the wrong column, which on an
+ * invoice is worse than the flat text this replaces, so the run is only read as a
+ * table when the columns are unambiguous: every row divides into the same number of
+ * cells, and the columns stand further apart than their own cells are ragged. Anything
+ * less and the lines stay paragraphs.
+ */
+function tableAt(lines, start, rtl) {
+  const rows = [];
+  for (let i = start; i < lines.length; i++) {
+    const cells = lineToCells(lines[i], rtl);
+    if (cells.length < MIN_TABLE_COLUMNS) break;
+    if (rows.length && cells.length !== rows[0].length) break;
+    rows.push(cells);
+  }
+  if (rows.length < MIN_TABLE_ROWS) return null;
+
+  const centres = rows[0].map((_, k) => rows.map(row => cellCentre(row[k])));
+  const ragged = Math.max(...centres.map(c => Math.max(...c) - Math.min(...c)));
+
+  const means = centres.map(c => c.reduce((a, b) => a + b, 0) / c.length);
+  const apart = Math.min(...means.slice(1).map((m, k) => Math.abs(m - means[k])));
+  if (ragged >= apart) return null;
+
+  const text = row => row.map(cell => joinOneLine(cell).replace(/\|/g, '\\|'));
+  if (!text(rows[0]).every(Boolean)) return null;
+
+  const markdown = [
+    text(rows[0]),
+    rows[0].map(() => '---'),
+    ...rows.slice(1).map(text),
+  ].map(cells => `| ${cells.join(' | ')} |`).join('\n');
+
+  return { end: start + rows.length, markdown };
+}
+
 function linesToParagraphs(rawLines) {
   const rtl = rawLines.some(l => HEBREW_OR_ARABIC.test(l.map(i => i.str).join('')));
   const lines = orderLines(rawLines, rtl);
@@ -218,13 +313,21 @@ function linesToParagraphs(rawLines) {
   let current = [];
 
   const flush = () => {
-    if (current.length) paragraphs.push(current.join(' '));
+    if (current.length) paragraphs.push(escapeBlockMarker(current.join(' ')));
     current = [];
   };
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < lines.length; ) {
+    const table = tableAt(lines, i, rtl);
+    if (table) {
+      flush();
+      paragraphs.push(table.markdown);
+      i = table.end;
+      continue;
+    }
+
     const text = joinOneLine(lines[i]);
-    if (!text) continue;
+    if (!text) { i++; continue; }
 
     if (i > 0 && body > 0) {
       const gap = lineY(lines[i - 1]) - lineY(lines[i]);
@@ -233,24 +336,51 @@ function linesToParagraphs(rawLines) {
 
     current.push(text);
     if (column > 0 && lineWidth(lines[i]) < column * SHORT_LINE_RATIO) flush();
+    i++;
   }
   flush();
   return paragraphs;
 }
 
-// Headers and footers repeat verbatim on every page; body text does not.
-function dropRepeatedLines(pages) {
-  if (pages.length < 2) return pages;
+// Above this share of the document, what repeats is the document rather than its
+// furniture, and dropping it would delete the content.
+const MAX_REPEATED_SHARE = 0.5;
+
+/**
+ * The texts that repeat on every page and are page furniture rather than content.
+ *
+ * Headers and footers repeat verbatim on every page and body text does not, so
+ * repetition alone usually identifies them. It stops meaning that when the pages are
+ * copies of one template — two tickets from the same order, the same form filled
+ * twice — where nearly everything repeats and almost none of it is furniture. A
+ * header is a small part of a page, so a repeated share that large is the signal to
+ * keep everything.
+ *
+ * @param {string[][]} candidates - per page, the texts eligible to be furniture
+ * @param {number[]} pageSizes - per page, how many blocks the page holds in total
+ * @returns {Set<string>}
+ */
+function repeatedFurniture(candidates, pageSizes) {
+  if (candidates.length < 2) return new Set();
 
   const counts = new Map();
-  for (const paragraphs of pages) {
-    for (const text of new Set(paragraphs)) {
-      counts.set(text, (counts.get(text) || 0) + 1);
-    }
+  for (const texts of candidates) {
+    for (const text of new Set(texts)) counts.set(text, (counts.get(text) || 0) + 1);
   }
-  return pages.map(paragraphs =>
-    paragraphs.filter(text => counts.get(text) < pages.length)
+  const furniture = new Set(
+    [...counts].filter(([, n]) => n === candidates.length).map(([text]) => text)
   );
+
+  const total = pageSizes.reduce((a, b) => a + b, 0);
+  const repeated = candidates.reduce(
+    (n, texts) => n + texts.filter(text => furniture.has(text)).length, 0
+  );
+  return repeated > total * MAX_REPEATED_SHARE ? new Set() : furniture;
+}
+
+function dropRepeatedLines(pages) {
+  const furniture = repeatedFurniture(pages, pages.map(p => p.length));
+  return pages.map(paragraphs => paragraphs.filter(text => !furniture.has(text)));
 }
 
 // Below this share of page text, the structure tree is not describing the whole
@@ -308,6 +438,8 @@ module.exports = {
   pdfToMarkdown,
   reorderLtrRuns,
   joinItems,
+  repeatedFurniture,
+  escapeBlockMarker,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter },
+  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines, tableAt, lineToCells },
 };

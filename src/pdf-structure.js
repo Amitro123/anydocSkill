@@ -3,15 +3,22 @@
  *
  * A tagged PDF (anything exported by Word, LibreOffice and most modern tools) carries
  * a structure tree declaring paragraphs, lists and tables. Reading it gives exact
- * boundaries where the geometry heuristics in pdf-extract.js can only guess, and it
- * naturally skips headers, footers and other artifacts, which are untagged.
+ * boundaries where the geometry heuristics in pdf-extract.js can only guess.
+ *
+ * Headers, footers and other page furniture are untagged, so the tree does not reach
+ * them. They are collected separately and filtered the way pdf-extract.js filters them
+ * — dropped only when they repeat on every page — because a strip that appears once is
+ * not furniture. On a one-page extract it is often the only place a company name or a
+ * contact detail appears, and dropping it unconditionally loses content silently.
  *
  * The ceiling is set by how the source was authored: a document formatted by hand
  * rather than with real heading styles tags everything as P, so no headings appear
  * however well this reads the tree.
  */
 
-const { joinItems } = require('./pdf-extract');
+const {
+  joinItems, repeatedFurniture, escapeBlockMarker, _internals: { joinOneLine },
+} = require('./pdf-extract');
 
 const HEADING_ROLES = { H1: 1, H2: 2, H3: 3, H4: 4, H5: 5, H6: 6 };
 
@@ -37,11 +44,14 @@ function itemsByMarkedContentId(items) {
   return byId;
 }
 
-function nodeText(node, byId) {
+function nodeText(node, byId, used) {
   const collected = [];
   (function walk(n) {
     if (!n) return;
-    if (n.type === 'content' && byId.has(n.id)) collected.push(...byId.get(n.id));
+    if (n.type === 'content' && byId.has(n.id)) {
+      collected.push(...byId.get(n.id));
+      used.add(n.id);
+    }
     (n.children || []).forEach(walk);
   })(node);
 
@@ -79,54 +89,149 @@ function labelRuns(entries) {
   return runs;
 }
 
-function renderList(node, byId) {
+function renderList(node, byId, used, blocks, meta) {
   const entries = (node.children || []).filter(c => c.role === 'LI').map(li => {
     const parts = li.children || [];
-    const label = parts.filter(p => p.role === 'Lbl').map(p => nodeText(p, byId)).join(' ').trim();
+    const label = parts.filter(p => p.role === 'Lbl').map(p => nodeText(p, byId, used)).join(' ').trim();
     const bodyNodes = parts.filter(p => p.role !== 'Lbl');
     let body = (bodyNodes.length
-      ? bodyNodes.map(p => nodeText(p, byId)).filter(Boolean).join(' ')
-      : nodeText(li, byId)).trim();
+      ? bodyNodes.map(p => nodeText(p, byId, used)).filter(Boolean).join(' ')
+      : nodeText(li, byId, used)).trim();
 
-    // Hebrew numbering renders as ".1", so the separator lands at the head of the
-    // body. Markdown supplies its own, and a bullet does not need one.
-    if (label) body = body.replace(/^[.)]\s*/, '');
-    return { label, body };
+    // Hebrew numbering renders as ".1", so the separator lands at the head of the body
+    // rather than the end of the label. Markdown supplies its own for a numbered item;
+    // a bullet gets none, so the label keeps the separator the page drew.
+    let separator = '';
+    if (label) {
+      const split = body.match(/^([.)])\s*/);
+      if (split) {
+        separator = split[1];
+        body = body.slice(split[0].length);
+      }
+    }
+    return { label, body, separator };
   }).filter(e => e.label || e.body);
 
   if (!entries.length) return [];
 
-  return labelRuns(entries).map(run => {
+  // An item split by a page break leaves its label behind on the page before, so the
+  // tail arrives as an LI with an empty Lbl. Rendered as a bullet it invents a list
+  // item in the middle of a sentence; it is the previous item still going.
+  const tail = !entries[0].label && entries.some(e => e.label) ? entries.shift() : null;
+  if (tail && !blocks.length) meta.continuesPrevious = true;
+
+  const rendered = tail ? [tail.body] : [];
+  if (!entries.length) return rendered;
+
+  return rendered.concat(labelRuns(entries).map(run => {
     if (run.ordered) {
       const start = numericLabel(run.entries[0].label);
       return run.entries.map((e, i) => `${start + i}. ${e.body}`).join('\n');
     }
-    return run.entries.map(e => `- ${[e.label, e.body].filter(Boolean).join(' ')}`).join('\n');
-  });
+    return run.entries
+      .map(e => `- ${[e.label + e.separator, e.body].filter(Boolean).join(' ')}`)
+      .join('\n');
+  }));
 }
 
-function renderNode(node, byId, blocks) {
+/**
+ * Render a tagged table, or return null when the tags do not describe a grid.
+ *
+ * Where the geometry path has to infer columns from where cells sit, a tagged table
+ * states them, so this is the reading to trust. It still has to come out rectangular:
+ * Markdown has no row or column spans, and a ragged table would silently shift cells
+ * into the wrong columns. Anything that is not a clean grid falls back to the cells
+ * being read as ordinary paragraphs, which loses the shape but never moves a value.
+ */
+function renderTable(node, byId, used) {
+  const rows = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.role === 'TR') {
+      const cells = (n.children || []).filter(c => c.role === 'TD' || c.role === 'TH');
+      if (cells.length) rows.push(cells.map(c => nodeText(c, byId, used).replace(/\|/g, '\\|')));
+      return;
+    }
+    (n.children || []).forEach(walk);
+  })(node);
+
+  const width = rows.length ? rows[0].length : 0;
+  if (rows.length < 2 || width < 2 || rows.some(r => r.length !== width)) return null;
+
+  // A grid holding no text is a layout table — the way a hand-formatted page positions
+  // images — and rendering it emits a table of empty cells where the page showed art.
+  if (!rows[0].every(Boolean) || !rows.slice(1).some(r => r.some(Boolean))) return null;
+
+  return [rows[0], rows[0].map(() => '---'), ...rows.slice(1)]
+    .map(cells => `| ${cells.join(' | ')} |`).join('\n');
+}
+
+function renderNode(node, byId, blocks, used, meta) {
   if (!node) return;
   const role = node.role;
 
+  if (role === 'Table') {
+    const table = renderTable(node, byId, used);
+    if (table) {
+      blocks.push(table);
+      return;
+    }
+  }
+
   if (role === 'L') {
-    blocks.push(...renderList(node, byId));
+    blocks.push(...renderList(node, byId, used, blocks, meta));
     return;
   }
 
   if (HEADING_ROLES[role]) {
-    const text = nodeText(node, byId);
+    const text = nodeText(node, byId, used);
     if (text) blocks.push(`${'#'.repeat(HEADING_ROLES[role])} ${text}`);
     return;
   }
 
   if (role === 'P' || role === 'Caption') {
-    const text = nodeText(node, byId);
-    if (text) blocks.push(text);
+    const text = nodeText(node, byId, used);
+    if (text) blocks.push(escapeBlockMarker(text));
     return;
   }
 
-  (node.children || []).forEach(child => renderNode(child, byId, blocks));
+  (node.children || []).forEach(child => renderNode(child, byId, blocks, used, meta));
+}
+
+const SAME_LINE = 2;  // baselines within this many units are one line
+
+/**
+ * Read the page text the structure tree never claimed, as lines.
+ *
+ * Split around the tagged content's vertical span so a header stays before the body and
+ * a footer after it, rather than all of it landing at one end of the page.
+ */
+function untaggedLines(items, byId, used) {
+  const claimed = new Set();
+  for (const [id, group] of byId) {
+    if (used.has(id)) group.forEach(item => claimed.add(item));
+  }
+
+  const loose = items.filter(i => typeof i.str === 'string' && i.str.trim() && !claimed.has(i));
+  if (!loose.length) return { above: [], below: [] };
+
+  const claimedYs = [...claimed].map(i => i.transform[5]);
+  const top = claimedYs.length ? Math.max(...claimedYs) : -Infinity;
+
+  const lines = [];
+  for (const item of [...loose].sort((a, b) => b.transform[5] - a.transform[5])) {
+    const last = lines[lines.length - 1];
+    if (last && Math.abs(last[0].transform[5] - item.transform[5]) < SAME_LINE) last.push(item);
+    else lines.push([item]);
+  }
+
+  const above = [];
+  const below = [];
+  for (const line of lines) {
+    const text = joinOneLine(line);
+    if (text) (line[0].transform[5] > top ? above : below).push(escapeBlockMarker(text));
+  }
+  return { above, below };
 }
 
 /**
@@ -136,7 +241,7 @@ function renderNode(node, byId, blocks) {
  *   page text the structure tree accounted for, used to decide whether to trust it.
  */
 async function structuredMarkdown(doc, keep = () => true) {
-  const blocks = [];
+  const pages = [];
   let tagged = 0;
   let total = 0;
 
@@ -149,17 +254,56 @@ async function structuredMarkdown(doc, keep = () => true) {
     const { items } = await page.getTextContent({ includeMarkedContent: true });
     const byId = itemsByMarkedContentId(items);
 
-    const before = blocks.length;
-    renderNode(tree, byId, blocks);
+    const blocks = [];
+    const used = new Set();
+    const meta = {};
+    renderNode(tree, byId, blocks, used, meta);
 
     total += items.filter(i => typeof i.str === 'string').reduce((n2, i) => n2 + i.str.length, 0);
-    tagged += blocks.slice(before).join('').length;
-  }
+    tagged += blocks.join('').length;
 
+    pages.push({ blocks, continuesPrevious: !!meta.continuesPrevious, ...untaggedLines(items, byId, used) });
+  }
+  rejoinAcrossPages(pages);
+
+  // Coverage still measures the tree alone: it decides whether to trust the tree's
+  // paragraph boundaries, which recovered furniture says nothing about.
   return {
-    markdown: blocks.filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim() + '\n',
+    markdown: assemble(pages).replace(/\n{3,}/g, '\n\n').trim() + '\n',
     coverage: total ? tagged / total : 0,
   };
 }
 
-module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel } };
+/**
+ * Put a sentence a page break split back together.
+ *
+ * Pages are read one at a time, so an item running past the foot of a page arrives as
+ * two blocks — the tags say where the page ended, not where the sentence did. The tail
+ * has already been recognised as a continuation rather than a new item, so this is a
+ * join, not a guess.
+ */
+function rejoinAcrossPages(pages) {
+  for (let n = 1; n < pages.length; n++) {
+    const previous = pages[n - 1].blocks;
+    if (!pages[n].continuesPrevious || !previous.length || !pages[n].blocks.length) continue;
+    previous[previous.length - 1] += ` ${pages[n].blocks.shift()}`;
+  }
+}
+
+// Only the untagged text can be furniture here — the tree already told us the rest is
+// content — and of that, only what repeats on every page. Same test as the geometry
+// path, so a PDF converts the same whether or not it carries a structure tree.
+function assemble(pages) {
+  const furniture = repeatedFurniture(
+    pages.map(p => [...p.above, ...p.below]),
+    pages.map(p => p.blocks.length + p.above.length + p.below.length)
+  );
+  const keep = text => !furniture.has(text);
+
+  return pages
+    .flatMap(p => [...p.above.filter(keep), ...p.blocks, ...p.below.filter(keep)])
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+module.exports = { structuredMarkdown, _internals: { labelRuns, numericLabel, untaggedLines, assemble, renderTable, renderList, rejoinAcrossPages } };

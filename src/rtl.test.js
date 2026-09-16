@@ -1,5 +1,5 @@
 const assert = require('node:assert');
-const { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder } = require('./rtl');
+const { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder, markRtlLines } = require('./rtl');
 const { renderHtml, parseFrontMatter } = require('./render-html');
 
 const hebrewText = `
@@ -34,6 +34,79 @@ assert(output.includes('dir: rtl'), 'front-matter should include dir: rtl');
 assert(output.includes('lang: he'), 'front-matter should include lang: he');
 assert(output.includes('<div dir="rtl"'), 'body should be wrapped in RTL div');
 assert(output.includes('title: "Test Doc"'), 'front-matter should include title');
+
+// markRtlLines — the mark must set direction without breaking Markdown structure
+const RLM = '‏';
+const markedLines = markRtlLines([
+  '# כותרת',
+  '- פריט 2024',
+  '1. סעיף',
+  '> ציטוט',
+  '| א | ב |',
+  '<div dir="rtl">',
+  'plain english',
+  '```',
+  'const x = "עברית";',
+  '```',
+].join('\n')).split('\n');
+
+assert(markedLines[0] === `# ${RLM}כותרת`, 'a heading keeps its # at line start');
+assert(markedLines[1] === `- ${RLM}פריט 2024`, 'a bullet keeps its marker at line start');
+assert(markedLines[2] === `1. ${RLM}סעיף`, 'an ordered item keeps its number at line start');
+assert(markedLines[3] === `> ${RLM}ציטוט`, 'a blockquote keeps its marker at line start');
+assert(markedLines[4] === '| א | ב |', 'a table row is left alone — a mark before | breaks it');
+assert(markedLines[5] === '<div dir="rtl">', 'raw HTML is left alone');
+assert(markedLines[6] === 'plain english', 'a line with no RTL letter is left alone');
+assert(markedLines[8] === 'const x = "עברית";', 'fenced code is left alone');
+assert(markRtlLines('שלום')  === `${RLM}שלום`, 'a bare paragraph is marked at its start');
+
+assert(output.split('\n').some(l => l.startsWith(`# ${RLM}`)),
+  'addRtlSupport should mark the body so direction survives without the HTML wrapper');
+assert(!addRtlSupport(englishText, { title: 'E' }).includes(RLM), 'LTR output carries no marks');
+
+// promoteHeadings — a hand-formatted document carries its titles as bold body text
+const { promoteHeadings } = require('./headings');
+const letter = [
+  '**הנדון: מצוקת כוח אדם בצהרון**',
+  'אנחנו, הורי ילדי גן כרמים, פונים אליכן.',
+  '**1. שתי נשות צוות בלבד**',
+  'מדובר בילדים בגילאים שונים מאוד.',
+  '**לאור כל האמור, אנו מבקשים את התערבותכן הדחופה ואת תגבור הצהרון בסייעת נוספת.**',
+  'בתודה מראש,',
+  '**הורי גן כרמים**',
+].join('\n\n').split(/\n{2,}/);
+const promoted = promoteHeadings(letter.join('\n\n')).split(/\n{2,}/);
+
+assert(promoted[0] === '## הנדון: מצוקת כוח אדם בצהרון', 'a bold title becomes a heading');
+assert(promoted[2] === '## 1. שתי נשות צוות בלבד', 'a numbered bold title becomes a heading');
+assert(promoted[4] === letter[4], 'a bold sentence is emphasis, not a title');
+assert(promoted[6] === letter[6], 'bold with no body under it is a sign-off, not a title');
+assert(promoted[1] === letter[1] && promoted[5] === letter[5], 'body text is untouched');
+
+assert(promoteHeadings('# כותרת\n\n**מודגש**\n\nגוף') === '# כותרת\n\n**מודגש**\n\nגוף',
+  'a document with real headings had styles, so its bold is only emphasis');
+assert(promoteHeadings('**חלק **מודגש** ממשפט**\n\nגוף').startsWith('**חלק '),
+  'partial emphasis inside a paragraph is never a heading');
+
+// preserveNumbering — a renderer counts a list from its first number, so numbering that
+// does not run straight comes out silently renumbered.
+const { preserveNumbering } = require('./numbering');
+
+// A demand letter numbers its sections and its clauses separately, so the run reads
+// 1, 1, 2, 3 and a renderer would print 1, 2, 3, 4 — shifting every clause it cites.
+const letterRun = '1. עובדות\n\n1. ביום 6 במרץ\n\n2. לאחר משא ומתן\n\n3. מועד תחילת העבודה';
+assert(preserveNumbering(letterRun) ===
+  '1\\. עובדות\n\n1\\. ביום 6 במרץ\n\n2\\. לאחר משא ומתן\n\n3\\. מועד תחילת העבודה',
+  'numbering a renderer would change must be escaped, so the page numbers survive');
+
+assert(preserveNumbering('1. אחד\n\n2. שניים\n\n3. שלושה') === '1. אחד\n\n2. שניים\n\n3. שלושה',
+  'a run a renderer would number identically stays a list');
+assert(preserveNumbering('72. שבעים ושתיים\n\n73. שבעים ושלוש').startsWith('72. '),
+  'a list opening at 72 renders from 72, so it needs no escaping');
+assert(preserveNumbering('5. חמש\n\nפסקה\n\n6. שש') === '5. חמש\n\nפסקה\n\n6. שש',
+  'a paragraph closes the list, so each number opens its own and is rendered as written');
+assert(preserveNumbering('2. שתיים\n\n4. ארבע') === '2\\. שתיים\n\n4\\. ארבע',
+  'a gap in the sequence would be closed up by the renderer');
 
 // parseFrontMatter
 const parsed = parseFrontMatter(output);
@@ -107,6 +180,22 @@ assert(runShape(['א', 'ב']) === 'ul:2', 'non-numeric labels stay bullets');
 assert(pdfInternals.numericLabel('1.') === 1, 'a trailing period is part of the label');
 assert(pdfInternals.numericLabel('2 )') === 2, 'spacing inside a label is tolerated');
 assert(pdfInternals.numericLabel('א') === null, 'a Hebrew letter is not a number');
+
+// PDF structure tree — untagged page furniture is content until it proves repetitive
+const page = (blocks, above, below) => ({ blocks, above, below });
+const footer = 'עתיד האוטומציה: הדרכות | ייעוץ';
+
+assert(pdfInternals.assemble([page(['גוף'], ['כותרת'], [footer])])
+  === `כותרת\n\nגוף\n\n${footer}`,
+  'on a one-page extract the strip appears once, so it is content and must be kept');
+
+assert(pdfInternals.assemble([page(['א'], [], [footer]), page(['ב'], [], [footer])])
+  === 'א\n\nב',
+  'a strip on every page is furniture and must be dropped');
+
+assert(pdfInternals.assemble([page(['א'], [], ['- 1 -']), page(['ב'], [], ['- 2 -'])])
+  === 'א\n\n- 1 -\n\nב\n\n- 2 -',
+  'page numbers differ per page, so they survive the filter');
 
 // PDF geometry — an embedded LTR run must survive an RTL line
 const { reorderLtrRuns } = require('./pdf-extract');
@@ -195,6 +284,122 @@ for (const bad of ['0', '3-1', 'x', '']) {
   try { cli.parsePageSpec(bad); } catch { threw = true; }
   assert(threw, `"${bad}" must be rejected as a page spec`);
 }
+
+// Repeated text is furniture only while it stays a small part of the document.
+const { repeatedFurniture, _internals: { dropRepeatedLines } } = require('./pdf-extract');
+const sizes = pages => pages.map(p => p.length);
+
+const withFooter = [
+  ['כותרת המסמך', 'פסקה ראשונה', 'עוד טקסט', 'רשימה', 'עתיד האוטומציה'],
+  ['המשך המסמך', 'פסקה שנייה', 'סיכום', 'נספח', 'עתיד האוטומציה'],
+];
+assert([...repeatedFurniture(withFooter, sizes(withFooter))].join() === 'עתיד האוטומציה',
+  'a footer repeating on every page is furniture');
+assert(!dropRepeatedLines(withFooter).flat().includes('עתיד האוטומציה'),
+  'and must be dropped from the output');
+
+// Two tickets from one order: the pages are copies of a template, so almost everything
+// repeats and almost none of it is furniture. Dropping it deleted both tickets.
+const tickets = [
+  ['מס\' כרטיס', 'FC41P', 'סטטוס תשלום', 'שולם', 'זמן ומיקום', '₪59 – ילד'],
+  ['מס\' כרטיס', 'FC43C', 'סטטוס תשלום', 'שולם', 'זמן ומיקום', '₪39 – מבוגר'],
+];
+assert(repeatedFurniture(tickets, sizes(tickets)).size === 0,
+  'when most of the page repeats, the repetition is the document, not its furniture');
+assert(dropRepeatedLines(tickets).flat().length === 12, 'so every line survives');
+
+assert(repeatedFurniture([['לבד']], [1]).size === 0, 'one page has nothing to repeat against');
+
+// Extracted text is read back as Markdown, so a line opening with a block marker
+// grows structure the page never had.
+const { escapeBlockMarker } = require('./pdf-extract');
+
+assert(escapeBlockMarker('# מס\' פריט תיאור פריט כמות') === '\\# מס\' פריט תיאור פריט כמות',
+  'an invoice column headed # must not become a heading');
+assert(escapeBlockMarker('> ציטוט') === '\\> ציטוט', 'a stray > must not become a blockquote');
+assert(escapeBlockMarker('- עמוד 1 -') === '\\- עמוד 1 -',
+  'a dash on both ends is decoration — no list item closes with its own marker');
+
+assert(escapeBlockMarker('- The Environment') === '- The Environment',
+  'a plain dash-prefixed line is the list it looks like and must stay one');
+assert(escapeBlockMarker('1. סעיף') === '1. סעיף', 'source numbering is left to render as a list');
+assert(escapeBlockMarker('מחיר 1,200.00 #4') === 'מחיר 1,200.00 #4',
+  'a marker away from the line start decides nothing and is left alone');
+
+// Tables — a PDF records one as positioned glyphs, so the columns have to be recovered
+// from where the cells sit, and recovering them wrongly files a value under the wrong
+// heading. Fixtures follow the invoice this was built from: RTL, cells [left..right].
+const box = (left, right, str, y) => ({ str, width: right - left, transform: [0, 0, 0, 10, left, y] });
+
+const invoice = [
+  [box(569, 575, '#', 542), box(517, 555, 'מס\' פריט', 542), box(419, 465, 'תיאור', 542)],
+  [box(569, 575, '1', 526), box(549, 555, '0', 526), box(450, 465, 'יעוץ', 526)],
+];
+const table = geo.tableAt(invoice, 0, true);
+assert(table && table.end === 2, 'two rows of aligned cells are a table');
+assert(table.markdown.split('\n')[0] === '| # | מס\' פריט | תיאור |',
+  `the rightmost cell leads an RTL table — got ${table && table.markdown.split('\n')[0]}`);
+assert(table.markdown.split('\n')[2] === '| 1 | 0 | יעוץ |', 'each value stays under its heading');
+
+// Columns that wander further than they stand apart cannot be told apart.
+const ragged = [
+  [box(500, 510, 'א', 40), box(450, 460, 'ב', 40), box(400, 410, 'ג', 40)],
+  [box(500, 510, 'ד', 20), box(410, 420, 'ה', 20), box(400, 410, 'ו', 20)],
+];
+assert(geo.tableAt(ragged, 0, true) === null, 'ambiguous columns stay paragraphs');
+
+const shortRow = [invoice[0], [box(569, 575, '1', 526), box(450, 465, 'יעוץ', 526)]];
+assert(geo.tableAt(shortRow, 0, true) === null, 'a row of a different width ends the run');
+assert(geo.tableAt([invoice[0]], 0, true) === null, 'a header with no data under it is not a table');
+
+// Producers pad a row with whitespace items wide enough to span the gap between columns.
+const padded = [box(569, 575, '#', 542), box(556, 568, ' ', 542), box(517, 555, 'מס\'', 542)];
+assert(geo.lineToCells(padded, true).length === 2, 'a spacer item must not bridge two cells');
+
+// A tagged table states its columns, so that reading is trusted — unless it holds no
+// text, which is how a hand-formatted page positions images.
+const content = (id, str) => ({ role: 'TD', children: [{ type: 'content', id }] });
+const row = (...cells) => ({ role: 'TR', children: cells.map(([id]) => content(id)) });
+const cellItems = new Map([
+  ['a', [box(100, 140, 'שם', 50)]], ['b', [box(40, 80, 'סכום', 50)]],
+  ['c', [box(100, 140, 'יעוץ', 30)]], ['d', [box(40, 80, '1200', 30)]],
+  ['e', [box(100, 140, '', 10)]], ['f', [box(40, 80, '', 10)]],
+]);
+const tagged = { role: 'Table', children: [row(['a'], ['b']), row(['c'], ['d'])] };
+assert(pdfInternals.renderTable(tagged, cellItems, new Set()).split('\n')[2] === '| יעוץ | 1200 |',
+  'a tagged table is rendered from its own row and cell tags');
+
+const layout = { role: 'Table', children: [row(['e'], ['f']), row(['e'], ['f'])] };
+assert(pdfInternals.renderTable(layout, cellItems, new Set()) === null,
+  'a grid holding no text is positioning art, not a table');
+
+// An item running past the foot of a page leaves its label behind, so the tail arrives
+// tagged LI with an empty Lbl — a bullet there lands in the middle of a sentence.
+const item = (lbl, bodyId) => ({
+  role: 'LI',
+  children: [
+    { role: 'Lbl', children: lbl ? [{ type: 'content', id: lbl }] : [] },
+    { role: 'LBody', children: [{ type: 'content', id: bodyId }] },
+  ],
+});
+const listItems = new Map([
+  ['n9', [box(60, 70, '9.', 90)]],
+  ['tail', [box(40, 90, 'אוטומציה', 99)]],
+  ['nine', [box(40, 90, 'ביום 27 באוגוסט', 90)]],
+]);
+const meta = {};
+const continued = pdfInternals.renderList(
+  { role: 'L', children: [item(null, 'tail'), item('n9', 'nine')] },
+  listItems, new Set(), [], meta);
+
+assert(continued[0] === 'אוטומציה', 'a tail with no label is the previous item continuing');
+assert(meta.continuesPrevious === true, 'and is flagged so the page before can take it back');
+assert(continued[1] === '9. ביום 27 באוגוסט', 'the labelled items after it are unaffected');
+
+const split = [{ blocks: ['...הועסק כמפתח'] }, { blocks: ['אוטומציה — היכן'], continuesPrevious: true }];
+pdfInternals.rejoinAcrossPages(split);
+assert(split[0].blocks[0] === '...הועסק כמפתח אוטומציה — היכן', 'the sentence is put back together');
+assert(split[1].blocks.length === 0, 'and is not left behind on the next page too');
 
 // A page must be assembled by position too: one producer emitted a newsletter's
 // middle section first, then its footer, then its header.

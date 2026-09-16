@@ -63,6 +63,34 @@ function detectVisualOrder(text) {
   return { reversed: leading > trailing && leading > 2, leading, trailing };
 }
 
+const RLM = '‏';  // U+200F RIGHT-TO-LEFT MARK
+const RTL_LETTER = /[֐-׿؀-ۿݐ-ݿ]/;
+// A leading marker Markdown reads structurally: a mark placed before it stops it parsing.
+const MARKDOWN_MARKER = /^(\s*(?:[-*+]|\d+\\?[.)]|#{1,6}|>)\s+)?/;
+
+/**
+ * Force RTL base direction line by line with U+200F.
+ *
+ * Markdown has no direction of its own. The dir="rtl" wrapper reaches only renderers
+ * that keep raw HTML and do not sanitise the attribute away; a plain editor, a GitHub
+ * preview or most viewers fall back to LTR, which left-aligns the text and strands
+ * digits and Latin runs on the wrong side of any line that does not open with a Hebrew
+ * letter. An RLM makes the Unicode first-strong rule resolve the line to RTL with no
+ * HTML at all, so both kinds of renderer read correctly.
+ */
+function markRtlLines(markdown) {
+  let inFence = false;
+
+  return markdown.split('\n').map(line => {
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; return line; }
+    // Table rows and raw HTML break if anything precedes their first character, and a
+    // line with no RTL letter has nothing for the mark to reorder.
+    if (inFence || /^\s*[|<]/.test(line) || !RTL_LETTER.test(line)) return line;
+
+    return line.replace(MARKDOWN_MARKER, `$&${RLM}`);
+  }).join('\n');
+}
+
 /**
  * Add RTL front-matter and wrap RTL paragraphs.
  *
@@ -95,7 +123,7 @@ function addRtlSupport(markdown, opts = {}) {
 
   const body = dir === 'ltr'
     ? markdown
-    : `<div dir="rtl" lang="${lang || 'he'}">\n\n${markdown.trim()}\n\n</div>`;
+    : `<div dir="rtl" lang="${lang || 'he'}">\n\n${markRtlLines(markdown.trim())}\n\n</div>`;
 
   return `${frontMatter}\n${notice}\n${body}`;
 }
@@ -113,4 +141,4 @@ function ingestFields(ingest) {
   ];
 }
 
-module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder };
+module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder, markRtlLines };

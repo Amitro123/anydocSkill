@@ -3,6 +3,25 @@
 Claude Code skill that converts documents to Markdown and to a standalone HTML page,
 with correct right-to-left layout for Hebrew.
 
+Getting the words out of a document is the easy half. The half that goes wrong quietly
+is everything around them — a footer that vanishes, a table flattened into a sentence, a
+legal clause renumbered by one. Each section below exists because a real document was
+converted wrongly and nobody noticed until they read it:
+
+| | |
+|---|---|
+| [Hebrew and RTL](#hebrew-and-rtl-documents) | Logical vs. visual order, and why the `.md` carries an invisible mark on every line |
+| [Headings](#headings-a-document-never-declared) | Recovering section titles a hand-formatted document never declared |
+| [Numbering](#numbering) | Keeping clause numbers a renderer would otherwise count for itself |
+| [Tables](#tables) | Recovering columns, and refusing to guess when they are ambiguous |
+| [Page furniture](#page-furniture) | Dropping a repeated header without deleting a repeated template |
+| [`--verify`](#checking-a-conversion) | Reading the page back against the output, mechanically |
+| [Regression corpus](#regression-corpus) | Real documents, kept outside this repo, pinned to snapshots |
+
+The one rule underneath all of it: **losing text silently is worse than converting
+badly.** Where the shape of a document cannot be recovered with confidence, the text
+comes through flat and intact rather than arranged into a guess.
+
 ## Install as a Claude Code plugin
 
 ```bash
@@ -31,8 +50,14 @@ node src/convert.js report.docx --format html --out-dir ./out
 ```
 
 `--format` is `md`, `html`, or `both` (default). Output lands next to the input unless
-`--out-dir` is given. `--force` writes output that failed the scrambled-text check.
-`--ingest` adds knowledge-base metadata — see below.
+`--out-dir` is given.
+
+| Flag | |
+|---|---|
+| `--verify` | Check the conversion against the page it came from — [see below](#checking-a-conversion) |
+| `--pages` | Convert part of a PDF |
+| `--ingest` | Add knowledge-base metadata — [see below](#knowledge-base-ingest) |
+| `--force` | Write output that failed the scrambled-text check |
 
 `--pages` selects part of a PDF: `--pages 1`, `--pages 2-4`, `--pages 1,5-7`. Pages are
 numbered from 1, and it applies to PDFs only — other formats have no page numbers, so
@@ -81,6 +106,15 @@ bug in the document or in this tool; the extractor handed back scrambled text. D
   correctly — always prefer them over a PDF of the same document.
 - Re-run with `--force` if you want the output anyway, knowing the text is scrambled.
 
+**Markdown carries no direction of its own.** The `.md` gets `dir: rtl` front-matter and
+a `<div dir="rtl">` wrapper, but those only reach a renderer that keeps raw HTML and does
+not sanitise the attribute away. Everywhere else — a plain editor, most previews — the
+base direction would fall back to LTR, which left-aligns the text and strands digits and
+Latin runs on the wrong side of the line. So each line also gets a U+200F mark, placed
+after any `#`, `-` or `1.` so the Markdown still parses. It is invisible and makes the
+line resolve RTL with no HTML at all. The `.html` output does not need it — direction
+lives on the `<html>` element there.
+
 **Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
 returns nothing and you get an empty document — the command warns when this happens. Add
 a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
@@ -89,6 +123,128 @@ pass the same check.
 **`--force` is not the default on purpose.** Output that is silently wrong is worse than
 a conversion that refuses: scrambled Hebrew looks like text, survives review, and only
 surfaces once it is already in a knowledge base.
+
+## Page furniture
+
+A running header or footer belongs to the page, not the document, so repeating it under
+every page break is noise. Identifying it is guesswork, though, and both ways of getting
+it wrong lose real content.
+
+It is dropped only when it repeats on **every page converted**. Convert one page and the
+strip is kept, because a line that appears once is content — often the only place a
+company name or a contact detail appears on that page.
+
+Repetition also stops counting once it covers more than half the document. Pages that are
+copies of one template — two tickets from the same order, the same form filled twice —
+repeat nearly everything, and almost none of it is a header. Without that guard a
+two-page ticket order came out as four lines.
+
+Both extraction paths share the test, so a PDF converts the same whether or not it
+carries a structure tree. `--verify` lists what was dropped this way, apart from the
+losses, so you can see it was furniture.
+
+## Headings a document never declared
+
+Most documents are formatted by hand: the section titles are bold body text, not real
+heading styles. No extractor can recover what the author never wrote, so the output
+would be one flat run of paragraphs with nothing to navigate by.
+
+A bold paragraph is therefore raised to `##` when it also looks like a title — under 80
+characters, not ending in `.`, `!` or `?`, and with body text underneath it. A bold
+sentence stays emphasis, and a bold sign-off at the end stays a sign-off. Documents that
+already contain real headings are left alone entirely: their author did use styles, so
+bold there is only ever emphasis.
+
+Marking the titles as Heading 1/2/3 in Word still beats the heuristic — do that where
+you can and this never has to guess.
+
+The reverse case is handled too. Extracted page text is read back as Markdown, so a line
+that happens to open with `#` — an invoice's first table column, say — would be re-read
+as a heading. Those are escaped. A dash is not: a dash-prefixed line usually is the list
+it looks like, and escaping them flattened a syllabus into paragraphs. A line that opens
+*and* closes with one (`- עמוד 1 -`) is decoration, and is escaped.
+
+## Numbering
+
+A renderer honours the number a list opens with and counts everything after it from
+there. So `1.` `1.` `2.` `3.` — a letter numbering its sections and its clauses
+separately — renders as 1, 2, 3, 4, and every clause number in the document shifts. The
+same happens wherever numbering restarts under a heading or skips a reserved number.
+
+Renumbering a legal document changes what it says: its clauses are cross-referenced by
+number, inside the document and outside it. A run therefore stays a real list only when
+the renderer would arrive at the same numbers. Otherwise its numbering is escaped and
+reads exactly as the page does.
+
+A clause running past the foot of a page is put back together too. Pages are read one at
+a time, so the tail arrives tagged as a list item whose label stayed behind — which
+rendered as a bullet dropped into the middle of a sentence.
+
+## Tables
+
+A PDF stores a table as ruled lines and positioned glyphs. Nothing in the file says
+which value belongs under which heading — that has to be recovered from where the cells
+sit, and recovering it wrongly files a number under the wrong column. On an invoice that
+is worse than the flat text it replaces, so a run of lines becomes a table only when the
+columns are unambiguous: every row divides into the same number of cells, and the
+columns stand further apart than their own cells are ragged. Anything less stays
+paragraphs.
+
+A tagged PDF states its columns instead of implying them, and that reading is taken
+as-is — except for a grid holding no text, which is how a hand-formatted page positions
+images rather than a table worth rendering.
+
+Markdown has no row or column spans, so a table needing either is left as paragraphs.
+
+## Checking a conversion
+
+`--verify` reads the page text straight back out of the PDF and compares it with the
+finished HTML turned into the words a reader would see:
+
+```bash
+node src/convert.js letter.pdf --verify
+```
+
+```
+Verified letter.pdf: 277 lines of page text.
+  2 repeated header/footer line(s) dropped, as intended:
+    עתיד האוטומציה: הדרכות | ייעוץ
+  No text lost, no number changed.
+```
+
+It reports four things: lines the page shows and the output does not, lines that kept
+every word but changed order (a table row read across rather than down), header and
+footer lines dropped on purpose, and numbers whose tallies differ — which is how a
+renumbered list shows up, since a renderer generates those numbers rather than storing
+them. Exit code is 3 when text is missing or a number changed.
+
+Every defect this converter has had was visible this way. Finding them meant reading a
+converted document against its original by eye, which does not scale and misses the
+quiet ones — a dropped footer, a clause renumbered by one.
+
+What it does not check: how words were assembled from the glyphs, since it reads lines
+through the same joining the converter does. It checks that the lines the extractor read
+reach the reader intact.
+
+## Regression corpus
+
+The generated fixtures in `test/` pin the behaviours someone thought to write down. Real
+documents are what actually find defects — every one so far came from a PDF nobody had
+tried, and fixing one silently broke another twice.
+
+Keep those documents **outside the repository**: they are invoices, letters and filings
+carrying names, ID numbers and medical details that have no business in a public repo or
+in anyone's git history. Point `ANYDOC_CORPUS` at a folder of them and the snapshots are
+kept beside them.
+
+```bash
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus          # compare against snapshots
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus -- -u    # record the current output
+```
+
+Each snapshot holds the Markdown and the verification report. A snapshot is not a claim
+that the output is right — it records what it was. Read the diff when one changes: that
+is the review, and the point of the suite.
 
 ## Knowledge-base ingest
 
@@ -144,7 +300,8 @@ Check `returncode`. A caller that only reads stdout sees an empty result and no 
 
 ## Things not to undo
 
-Four decisions look like they could be simplified. They cannot:
+These decisions look like they could be simplified. They cannot — most were paid for by
+a document that came out wrong, and several were nearly reverted by the next fix:
 
 - **`dir` goes on `<html>`, not `direction: rtl` in CSS.** `dir` is inherited and gives
   the Unicode bidi algorithm a base direction. CSS alone sets visual direction without
@@ -166,8 +323,30 @@ Four decisions look like they could be simplified. They cannot:
   Trusting array order reverses every word of a line from the second kind.
 - **Left-to-right runs inside RTL text are then reordered by ascending x.** A hyphenated
   case number split across items arrives backwards otherwise.
+- **A leading `#` is escaped; a leading dash is not.** Page text never means `#` as
+  Markdown, so an invoice column headed `#` would open a heading holding the whole
+  flattened row. A dash is the opposite: a dash-prefixed line usually is the list it
+  looks like, and escaping those turned a 21-item syllabus into paragraphs. Only a dash
+  that also *closes* the line is escaped — decoration, since no list item ends with its
+  own marker.
+- **Repetition means furniture only while it stays a small part of the document.** A
+  header repeats on every page and so does every line of a template — two tickets from
+  one order, the same form filled twice. Dropping whatever repeats deleted both tickets.
+  Above half the document, what repeats is the document.
+- **Untagged page text is kept unless it repeats on every page converted.** The structure
+  tree does not reach headers and footers, and discarding them outright lost the only
+  place a company name appeared on a one-page extract. Both extraction paths share the
+  same test, so a PDF converts the same whether or not it is tagged.
+- **A table is only emitted when its columns are unambiguous.** Every row has to divide
+  into the same number of cells, and the columns have to stand further apart than their
+  own cells are ragged. Filing a number under the wrong heading is worse than the flat
+  text it replaces.
+- **Bold becomes a heading only with the rest of the shape.** Short, not a sentence, and
+  with body text underneath it. A letter emphasises whole paragraphs and signs off in
+  bold, and promoting those invents an outline the document does not have.
 
-Every extraction is checked for visual-order scrambling before anything is written.
+Every extraction is checked for visual-order scrambling before anything is written, and
+`--verify` re-reads the page against the finished output.
 
 ## Releasing a change
 
@@ -192,11 +371,25 @@ and go back through the skill once the change is released.
 npm test                    # both suites
 npm run test:unit
 npm run test:integration
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus
 ```
 
 The unit suite covers pure helpers; the integration suite generates a document in each
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
+
+Three of those fixtures are page shapes that broke a real conversion, rebuilt as the
+smallest page that still poses the problem: a table whose first column is headed `#`,
+two pages that are copies of one template, and a letter numbering its sections and its
+clauses separately.
+
+The [corpus](#regression-corpus) is the suite that catches the next one. Generated
+fixtures pin what someone thought to write down; real documents are what actually find
+defects, and fixing one silently broke another twice.
+
+> When writing a fixture, keep its text inside the page. Anything past the right edge of
+> the MediaBox is clipped before it reaches the extractor, so lines come back truncated
+> and the fixture looks like a converter bug.
 
 Two of those assertions are invariants rather than examples, because every ordering
 defect found so far was the same mistake in a different place — code treating the order

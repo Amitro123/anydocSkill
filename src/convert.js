@@ -11,25 +11,33 @@
  *   0  success
  *   1  failure (missing file, unsupported format, bad arguments)
  *   2  extraction returned text in visual order and was refused
+ *   3  --verify found text missing from the output, or a number changed
  */
 
 const EXIT_FAILURE = 1;
 const EXIT_VISUAL_ORDER = 2;
+const EXIT_UNVERIFIED = 3;
 
 const path = require('path');
 const fs = require('fs');
 const { addRtlSupport, detectVisualOrder } = require('./rtl');
+const { promoteHeadings } = require('./headings');
+const { preserveNumbering } = require('./numbering');
 const { renderHtml } = require('./render-html');
 const { parsePageSpec } = require('./convert-args');
 
 function parseArgs(argv) {
-  const args = { format: 'both', outDir: null, input: null, force: false, ingest: false, pages: null };
+  const args = {
+    format: 'both', outDir: null, input: null,
+    force: false, ingest: false, pages: null, verify: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--format') args.format = argv[++i];
     else if (argv[i] === '--out-dir') args.outDir = argv[++i];
     else if (argv[i] === '--pages') args.pages = parsePageSpec(argv[++i]);
     else if (argv[i] === '--force') args.force = true;
     else if (argv[i] === '--ingest') args.ingest = true;
+    else if (argv[i] === '--verify') args.verify = true;
     else if (!args.input) args.input = argv[i];
   }
   return args;
@@ -75,7 +83,7 @@ async function toMarkdown(inputPath, pages = null) {
   return toMarkdown(inputPath);
 }
 
-async function convert({ input, format, outDir, force, ingest, pages }) {
+async function convert({ input, format, outDir, force, ingest, pages, verify: shouldVerify }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
 
   const title = path.basename(input, path.extname(input));
@@ -109,7 +117,7 @@ async function convert({ input, format, outDir, force, ingest, pages }) {
     ), { exitCode: EXIT_VISUAL_ORDER });
   }
 
-  const markdown = addRtlSupport(raw, {
+  const markdown = addRtlSupport(preserveNumbering(promoteHeadings(raw)), {
     title,
     source: path.basename(input),
     ingest: ingest ? {
@@ -138,9 +146,11 @@ async function convert({ input, format, outDir, force, ingest, pages }) {
     written.push(mdPath);
   }
 
+  const html = renderHtml(markdown);
+
   if (format === 'html' || format === 'both') {
     const htmlPath = path.join(dir, `${title}.html`);
-    fs.writeFileSync(htmlPath, renderHtml(markdown), 'utf8');
+    fs.writeFileSync(htmlPath, html, 'utf8');
     written.push(htmlPath);
   }
 
@@ -148,6 +158,13 @@ async function convert({ input, format, outDir, force, ingest, pages }) {
     throw new Error(`Unknown --format "${format}". Use md, html, or both.`);
   }
   written.forEach(p => console.log(`Written: ${p}`));
+
+  if (!shouldVerify) return;
+
+  const { verify, report, passed } = require('./verify');
+  const result = await verify(input, { raw, html, pages });
+  console.log(report(result, { name: path.basename(input) }));
+  if (!passed(result)) process.exitCode = EXIT_UNVERIFIED;
 }
 
 let args;
@@ -159,7 +176,7 @@ try {
 }
 if (!args.input) {
   console.error('Usage: node convert.js <input-file> [--format md|html|both] ' +
-                '[--out-dir <dir>] [--pages <spec>] [--ingest] [--force]');
+                '[--out-dir <dir>] [--pages <spec>] [--ingest] [--force] [--verify]');
   process.exit(EXIT_FAILURE);
 }
 convert(args).catch(err => {
