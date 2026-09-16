@@ -108,6 +108,21 @@ pass the same check.
 a conversion that refuses: scrambled Hebrew looks like text, survives review, and only
 surfaces once it is already in a knowledge base.
 
+## Headings a document never declared
+
+Most documents are formatted by hand: the section titles are bold body text, not real
+heading styles. No extractor can recover what the author never wrote, so the output
+would be one flat run of paragraphs with nothing to navigate by.
+
+A bold paragraph is therefore raised to `##` when it also looks like a title — under 80
+characters, not ending in `.`, `!` or `?`, and with body text underneath it. A bold
+sentence stays emphasis, and a bold sign-off at the end stays a sign-off. Documents that
+already contain real headings are left alone entirely: their author did use styles, so
+bold there is only ever emphasis.
+
+Marking the titles as Heading 1/2/3 in Word still beats the heuristic — do that where
+you can and this never has to guess.
+
 ## Knowledge-base ingest
 
 `--ingest` adds provenance metadata and a source notice, for pipelines that store

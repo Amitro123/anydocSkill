@@ -64,6 +64,30 @@ assert(output.split('\n').some(l => l.startsWith(`# ${RLM}`)),
   'addRtlSupport should mark the body so direction survives without the HTML wrapper');
 assert(!addRtlSupport(englishText, { title: 'E' }).includes(RLM), 'LTR output carries no marks');
 
+// promoteHeadings — a hand-formatted document carries its titles as bold body text
+const { promoteHeadings } = require('./headings');
+const letter = [
+  '**הנדון: מצוקת כוח אדם בצהרון**',
+  'אנחנו, הורי ילדי גן כרמים, פונים אליכן.',
+  '**1. שתי נשות צוות בלבד**',
+  'מדובר בילדים בגילאים שונים מאוד.',
+  '**לאור כל האמור, אנו מבקשים את התערבותכן הדחופה ואת תגבור הצהרון בסייעת נוספת.**',
+  'בתודה מראש,',
+  '**הורי גן כרמים**',
+].join('\n\n').split(/\n{2,}/);
+const promoted = promoteHeadings(letter.join('\n\n')).split(/\n{2,}/);
+
+assert(promoted[0] === '## הנדון: מצוקת כוח אדם בצהרון', 'a bold title becomes a heading');
+assert(promoted[2] === '## 1. שתי נשות צוות בלבד', 'a numbered bold title becomes a heading');
+assert(promoted[4] === letter[4], 'a bold sentence is emphasis, not a title');
+assert(promoted[6] === letter[6], 'bold with no body under it is a sign-off, not a title');
+assert(promoted[1] === letter[1] && promoted[5] === letter[5], 'body text is untouched');
+
+assert(promoteHeadings('# כותרת\n\n**מודגש**\n\nגוף') === '# כותרת\n\n**מודגש**\n\nגוף',
+  'a document with real headings had styles, so its bold is only emphasis');
+assert(promoteHeadings('**חלק **מודגש** ממשפט**\n\nגוף').startsWith('**חלק '),
+  'partial emphasis inside a paragraph is never a heading');
+
 // parseFrontMatter
 const parsed = parseFrontMatter(output);
 assert(parsed.meta.dir === 'rtl', 'front-matter dir should parse');

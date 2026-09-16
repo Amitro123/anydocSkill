@@ -19,6 +19,7 @@ const EXIT_VISUAL_ORDER = 2;
 const path = require('path');
 const fs = require('fs');
 const { addRtlSupport, detectVisualOrder } = require('./rtl');
+const { promoteHeadings } = require('./headings');
 const { renderHtml } = require('./render-html');
 const { parsePageSpec } = require('./convert-args');
 
@@ -109,7 +110,7 @@ async function convert({ input, format, outDir, force, ingest, pages }) {
     ), { exitCode: EXIT_VISUAL_ORDER });
   }
 
-  const markdown = addRtlSupport(raw, {
+  const markdown = addRtlSupport(promoteHeadings(raw), {
     title,
     source: path.basename(input),
     ingest: ingest ? {
