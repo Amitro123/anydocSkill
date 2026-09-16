@@ -4,10 +4,12 @@ Claude Code skill that wraps [anydoc](https://github.com/firecrawl/anydoc) with 
 
 ## What it does
 
-- Converts documents (PDF, Word, PowerPoint, Excel, EPUB, CSV, RTF) to Markdown via anydoc
-- Detects RTL languages by counting Hebrew/Arabic Unicode characters
+- Converts PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown
+- Detects RTL languages and refuses to emit text an extractor returned scrambled
 - Injects `dir: rtl` / `lang: he` YAML front-matter
 - Renders a standalone, print-ready HTML document with correct RTL layout
+
+PDF and PowerPoint use their own readers rather than anydoc — see below for why.
 
 ## Files
 
@@ -18,15 +20,18 @@ src/pdf-structure.js — Tagged-PDF structure tree reader
 src/pptx-extract.js  — PowerPoint → Markdown, one section per slide
 src/render-html.js   — Markdown → standalone RTL-aware HTML document
 src/convert.js       — CLI: routing, RTL, output formats
-src/rtl.test.js      — Unit tests
+src/rtl.test.js      — Unit tests (pure helpers)
+test/fixtures.js     — Generates the documents the integration tests convert
+test/integration.test.js — End-to-end conversions
 
 .claude/skills/anydoc/SKILL.md — Claude Code skill definition
+.github/workflows/ci.yml       — Runs both suites on Node 22.13 and 24
 ```
 
 ## Quick start
 
 ```bash
-npm install                     # marked + @firecrawl/anydoc
+npm install                     # anydoc, pdf.js, marked, adm-zip
 
 node src/convert.js contract.pdf --format both
 node src/convert.js contract.pdf --format html --out-dir ./out
@@ -116,5 +121,21 @@ A document is treated as RTL when > 30% of its letter characters fall in the Heb
 ## Tests
 
 ```bash
-npm test
+npm test              # both suites
+npm run test:unit     # pure helpers
+npm run test:integration
 ```
+
+The unit suite covers pure helpers. It would pass even with every converter broken —
+each extraction bug found while building this was invisible to it — so the integration
+suite generates small documents in each supported format, runs them through the CLI,
+and asserts on the output. Fixtures are built at test time rather than committed, so
+the suite carries no real documents and the Hebrew under test stays readable in
+`test/fixtures.js`.
+
+CI runs both on Node 22.13 and 24 for every push and pull request. Node 22.13 is the
+floor because `pdfjs-dist` requires it.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

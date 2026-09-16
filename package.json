@@ -4,7 +4,9 @@
   "description": "Claude Code skill wrapping anydoc with RTL (Hebrew/Arabic) support",
   "main": "src/rtl.js",
   "scripts": {
-    "test": "node src/rtl.test.js",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node src/rtl.test.js",
+    "test:integration": "node test/integration.test.js",
     "convert": "node src/convert.js"
   },
   "keywords": [
@@ -21,5 +23,14 @@
     "adm-zip": "^0.6.1",
     "marked": "^18.0.13",
     "pdfjs-dist": "^6.3.289"
-  }
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "src",
+    ".claude",
+    "README.md",
+    "LICENSE"
+  ]
 }
