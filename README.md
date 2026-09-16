@@ -63,6 +63,12 @@ node src/convert.js report.docx --format html --out-dir ./out
 numbered from 1, and it applies to PDFs only — other formats have no page numbers, so
 the flag is refused rather than silently ignored.
 
+A selection is kept as intervals, never expanded into the pages themselves: `2-4` is
+cheap to expand and `1-10000000` is not, and the spec does not say which is coming.
+Anything past page 100,000 is refused outright, before the PDF is opened — no document
+is that long, so it is a typo or a hostile argument either way. Whether the pages exist
+is checked once the document is open, naming the parts that do not.
+
 As a skill, `/anydoc <file>` — it asks which format you want unless your request
 already names one.
 
@@ -377,6 +383,15 @@ Installed copies update on the `version` field in `.claude-plugin/plugin.json`, 
 new commits. Pushing a fix without bumping it leaves every existing install on the old
 code — `claude plugin update` will report it is already current. Bump the version in the
 same commit as the change.
+
+Four places state that version: `package.json`, both roots of `package-lock.json`, and
+the plugin manifest. `npm run test:versions` fails when they disagree, because none of
+them fails a build on its own — a stale lockfile still installs, and a stale manifest
+still reports itself current. After bumping, run:
+
+```bash
+npm install --package-lock-only
+```
 
 **A running session keeps the version it started with.** `claude plugin update` writes
 the new version to disk and says so, but the session that is open resolves

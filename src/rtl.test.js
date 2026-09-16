@@ -307,15 +307,43 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   'the same line emitted right-to-left must read identically');
 
 // --pages accepts single pages, ranges and lists, and rejects nonsense
-const { _internals: cli } = require('./convert-args');
-assert([...cli.parsePageSpec('1')].join() === '1', 'a single page parses');
-assert([...cli.parsePageSpec('2-4')].join() === '2,3,4', 'a range expands');
-assert([...cli.parsePageSpec('1,5-6')].join() === '1,5,6', 'a list of both parses');
+const { _internals: cli, MAX_PAGE } = require('./convert-args');
+const selected = spec => {
+  const pick = cli.parsePageSpec(spec);
+  return Array.from({ length: 8 }, (_, i) => i + 1).filter(pick.has).join();
+};
+assert(selected('1') === '1', 'a single page parses');
+assert(selected('2-4') === '2,3,4', 'a range covers its members');
+assert(selected('1,5-6') === '1,5,6', 'a list of both parses');
+
 for (const bad of ['0', '3-1', 'x', '']) {
   let threw = false;
   try { cli.parsePageSpec(bad); } catch { threw = true; }
   assert(threw, `"${bad}" must be rejected as a page spec`);
 }
+
+// A selection is held as intervals, so an oversized range costs a comparison rather
+// than the ten million Set entries it used to allocate before the PDF was even opened.
+{
+  const started = Date.now();
+  const huge = cli.parsePageSpec(`1-${MAX_PAGE}`);
+  assert(Date.now() - started < 100, 'a range the size of the ceiling must not be expanded');
+  assert(huge.has(1) && huge.has(MAX_PAGE) && !huge.has(MAX_PAGE + 1),
+    'and still answers membership exactly');
+
+  for (const oversized of [`1-${MAX_PAGE + 1}`, '99999999999999999999']) {
+    let message = '';
+    try { cli.parsePageSpec(oversized); } catch (err) { message = err.message; }
+    assert(/past the highest this reads/.test(message),
+      `"${oversized}" must be refused before anything is allocated, got ${JSON.stringify(message)}`);
+  }
+}
+
+// What the document actually holds is only known once it is open, so the parser reports
+// which parts to complain about rather than deciding for itself.
+assert(cli.parsePageSpec('2-4,9').beyond(5).join() === '9',
+  'a range within the document is kept and one past its end is named, as written');
+assert(cli.parsePageSpec('1-3').beyond(10).length === 0, 'nothing to report when all of it fits');
 
 // Repeated text is furniture only while it stays a small part of the document.
 const { repeatedFurniture, _internals: { dropRepeatedLines } } = require('./pdf-extract');
