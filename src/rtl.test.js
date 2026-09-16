@@ -488,6 +488,32 @@ assert(continued[0] === 'אוטומציה', 'a tail with no label is the previou
 assert(meta.continuesPrevious === true, 'and is flagged so the page before can take it back');
 assert(continued[1] === '9. ביום 27 באוגוסט', 'the labelled items after it are unaffected');
 
+// A contract tags its clauses as a list but writes the numbering into the text instead
+// of into a Lbl, so every item arrives unlabelled already carrying "4." at the front.
+{
+  const clause = bodyId => ({ role: 'LI', children: [{ role: 'LBody', children: [{ type: 'content', id: bodyId }] }] });
+  const bodies = new Map([
+    ['c1', [box(40, 300, '1. המבוא לחוזה זה ונספחיו', 90)]],
+    ['c2', [box(40, 300, '2. כותרות הסעיפים הינן לשם נוחות', 70)]],
+    ['b1', [box(40, 300, 'שירותי אחזקה שוטפת', 90)]],
+    ['b2', [box(40, 300, 'בדיקות תקופתיות', 70)]],
+  ]);
+
+  const numbered = pdfInternals.renderList(
+    { role: 'L', children: [clause('c1'), clause('c2')] }, bodies, new Set(), [], {});
+  assert(numbered.length === 2, 'each self-numbered clause becomes a block of its own');
+  assert(numbered[0] === '1. המבוא לחוזה זה ונספחיו',
+    `the page's own number is kept and no bullet is added — got ${JSON.stringify(numbered[0])}`);
+  assert(!numbered.some(b => b.startsWith('- ')), 'a bullet would be a mark the page does not have');
+
+  // A list that really is unlabelled bullets still gets them: the numbering is what
+  // makes the marker redundant, and there is none here.
+  const bullets = pdfInternals.renderList(
+    { role: 'L', children: [clause('b1'), clause('b2')] }, bodies, new Set(), [], {});
+  assert(bullets.length === 1 && bullets[0] === '- שירותי אחזקה שוטפת\n- בדיקות תקופתיות',
+    `an unlabelled list with no numbering of its own stays a bullet list — got ${JSON.stringify(bullets)}`);
+}
+
 const split = [{ blocks: ['...הועסק כמפתח'] }, { blocks: ['אוטומציה — היכן'], continuesPrevious: true }];
 pdfInternals.rejoinAcrossPages(split);
 assert(split[0].blocks[0] === '...הועסק כמפתח אוטומציה — היכן', 'the sentence is put back together');

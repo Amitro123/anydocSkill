@@ -197,6 +197,13 @@ A clause running past the foot of a page is put back together too. Pages are rea
 a time, so the tail arrives tagged as a list item whose label stayed behind — which
 rendered as a bullet dropped into the middle of a sentence.
 
+A contract usually tags its clauses as a list but writes the numbering into the text
+rather than into a label, so every item arrives unlabelled already carrying `4.` or
+`4.1.` at the front. Adding a bullet there prints a mark the page does not have, in
+front of the number it does, so each clause becomes a block of its own and the numbering
+reads as the document wrote it. A list that really is unlabelled bullets still gets
+them — the numbering is what makes the marker redundant.
+
 ## Tables
 
 A PDF stores a table as ruled lines and positioned glyphs. Nothing in the file says
