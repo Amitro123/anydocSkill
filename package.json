@@ -16,10 +16,8 @@
     "document-conversion"
   ],
   "license": "MIT",
-  "peerDependencies": {
-    "anydoc": ">=0.1.0"
-  },
   "dependencies": {
+    "@firecrawl/anydoc": "^0.2.4",
     "marked": "^18.0.13"
   }
 }

@@ -23,8 +23,7 @@ src/rtl.test.js     — Unit tests
 ## Quick start
 
 ```bash
-npm install                 # marked
-npm install anydoc          # peer dependency, for non-Markdown input
+npm install                     # marked + @firecrawl/anydoc
 
 node src/convert.js contract.pdf --format both
 node src/convert.js contract.pdf --format html --out-dir ./out

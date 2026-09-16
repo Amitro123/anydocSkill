@@ -31,18 +31,16 @@ async function toMarkdown(inputPath) {
     return fs.readFileSync(inputPath, 'utf8');
   }
 
-  let anydoc;
+  let toMarkdown;
   try {
-    anydoc = require('anydoc');
+    ({ toMarkdown } = require('@firecrawl/anydoc'));
   } catch {
     throw new Error(
-      `Converting ${ext} requires anydoc. Install it with:\n\n  npm install anydoc\n`
+      `Converting ${ext} requires anydoc. Install it with:\n\n  npm install @firecrawl/anydoc\n`
     );
   }
 
-  const buf = fs.readFileSync(inputPath);
-  const { markdown } = await anydoc.convert(buf, { filename: path.basename(inputPath) });
-  return markdown;
+  return toMarkdown(inputPath);
 }
 
 async function convert({ input, format, outDir }) {
