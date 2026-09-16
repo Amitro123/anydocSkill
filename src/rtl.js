@@ -90,7 +90,7 @@ function addRtlSupport(markdown, opts = {}) {
   // The notice sits outside the RTL wrapper: it is provenance about the document
   // rather than part of it, and it is written in English.
   const notice = ingest
-    ? `\n> **Source:** ${source || ingest.location}, extracted by anydoceSkill on ${ingest.extractedAt}.\n`
+    ? `\n> **Source:** ${source || ingest.location}, extracted by anydocSkill on ${ingest.extractedAt}.\n`
     : '';
 
   const body = dir === 'ltr'
