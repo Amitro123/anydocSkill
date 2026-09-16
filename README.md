@@ -6,7 +6,7 @@ with correct right-to-left layout for Hebrew.
 ## Install as a Claude Code plugin
 
 ```bash
-claude plugin marketplace add Amitro123/anydoceSkill
+claude plugin marketplace add Amitro123/anydocSkill
 claude plugin install anydoc@anydoc-skill
 ```
 
@@ -103,7 +103,7 @@ dir: rtl
 lang: he
 ---
 
-> **Source:** contract.pdf, extracted by anydoceSkill on 2026-09-16.
+> **Source:** contract.pdf, extracted by anydocSkill on 2026-09-16.
 ```
 
 `content_mode` is always `verbatim` — this tool extracts and never summarises. The field
