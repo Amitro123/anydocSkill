@@ -16,6 +16,10 @@ const fx = require('./fixtures');
 const CLI = path.join(__dirname, '..', 'src', 'convert.js');
 const dir = fx.tempDir();
 
+// On exit rather than at the end of the file: a failing assertion throws past the last
+// statement, and a red suite used to leave a temp directory behind on every run.
+process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+
 function convert(input, format = 'both', extra = []) {
   const out = path.join(dir, 'out', path.basename(input).replace(/\W/g, '_') + extra.join(''));
   execFileSync(process.execPath, [CLI, input, '--format', format, '--out-dir', out, ...extra],
@@ -285,5 +289,4 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(fs.existsSync(path.join(dir, 'reversed.md')), '--force writes the output anyway');
 }
 
-fs.rmSync(dir, { recursive: true, force: true });
 console.log('All integration tests passed.');

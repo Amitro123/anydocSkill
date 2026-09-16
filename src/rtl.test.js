@@ -405,6 +405,38 @@ const layout = { role: 'Table', children: [row(['e'], ['f']), row(['e'], ['f'])]
 assert(pdfInternals.renderTable(layout, cellItems, new Set()) === null,
   'a grid holding no text is positioning art, not a table');
 
+// Coverage decides which extraction path a PDF takes, so it has to measure recovered
+// text. It used to divide rendered-Markdown length by raw glyph length, putting heading
+// hashes and table pipes the page never had into the numerator — the legal letter this
+// was built against reported 1.039, a share above everything there was.
+{
+  const { structuredMarkdown } = require('./pdf-structure');
+  const tagged = (id, str, y) => [
+    { type: 'beginMarkedContent', id },
+    box(40, 90, str, y),
+    { type: 'endMarkedContent' },
+  ];
+  const paragraph = id => ({ role: 'P', children: [{ type: 'content', id }] });
+
+  const all = structuredMarkdown([{
+    n: 1,
+    tree: { role: 'Document', children: [paragraph('a'), paragraph('b')] },
+    items: [...tagged('a', 'ראשון', 90), ...tagged('b', 'שני', 70)],
+  }]);
+  assert(all.coverage === 1, `a fully tagged page is 1, got ${all.coverage}`);
+
+  const half = structuredMarkdown([{
+    n: 1,
+    tree: { role: 'Document', children: [paragraph('a')] },
+    items: [...tagged('a', 'אאאא', 90), ...tagged('b', 'בבבב', 70)],
+  }]);
+  assert(half.coverage === 0.5, `half a tagged page is 0.5, got ${half.coverage}`);
+  assert(half.coverage < 0.6, 'and falls below the threshold, so the geometry path reads it');
+
+  const untagged = structuredMarkdown([{ n: 1, tree: null, items: [box(40, 90, 'טקסט', 90)] }]);
+  assert(untagged.coverage === 0, 'a page with no tree contributes nothing');
+}
+
 // An item running past the foot of a page leaves its label behind, so the tail arrives
 // tagged LI with an empty Lbl — a bullet there lands in the middle of a sentence.
 const item = (lbl, bodyId) => ({

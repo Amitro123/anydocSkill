@@ -1,5 +1,5 @@
 /**
- * RTL post-processing for anydoc Markdown output.
+ * RTL post-processing for extracted Markdown, whichever path produced it.
  * Detects Hebrew/Arabic text and wraps paragraphs with dir="rtl".
  */
 

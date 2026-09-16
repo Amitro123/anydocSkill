@@ -1,10 +1,10 @@
 /**
  * PDF → Markdown via pdf.js.
  *
- * anydoc's PDF path emits Hebrew in visual order (every word character-reversed),
- * which cannot be repaired downstream. pdf.js returns text items already in logical
- * reading order, so this module reconstructs lines and paragraphs from item geometry
- * instead.
+ * The firecrawl/anydoc extractor — the dependency, not this tool — emits Hebrew in
+ * visual order (every word character-reversed), which cannot be repaired downstream.
+ * pdf.js returns text items already in logical reading order, so this module
+ * reconstructs lines and paragraphs from item geometry instead.
  *
  * A tagged PDF is read through pdf-structure.js, which uses the document's own
  * structure tree. This geometry path is the fallback for untagged PDFs: it infers
@@ -388,6 +388,39 @@ function dropRepeatedLines(pages) {
 const MIN_STRUCTURE_COVERAGE = 0.6;
 
 /**
+ * Read every wanted page once, for both extraction paths.
+ *
+ * The structure probe used to run over the whole document and the geometry path then
+ * re-read every page, so an untagged PDF — the common case — paid for two full passes.
+ * Asking for marked content returns the same text items plus the tree's markers, which
+ * carry no text and are ignored by everything that reads `str`, so one read serves both.
+ *
+ * A page that cannot be read is reported and skipped. One corrupt page in a long
+ * document used to abort the conversion with a pdf.js stack and no page number, losing
+ * the other 199 pages along with it.
+ */
+async function readPages(doc, keep, filePath) {
+  const pages = [];
+
+  for (let n = 1; n <= doc.numPages; n++) {
+    if (!keep(n)) continue;
+    try {
+      const page = await doc.getPage(n);
+      const tree = await page.getStructTree().catch(() => null);
+      const { items } = await page.getTextContent({ includeMarkedContent: true });
+      pages.push({ n, tree, items });
+    } catch (err) {
+      console.warn(
+        `Warning: page ${n} of ${require('path').basename(filePath)} could not be read ` +
+        `(${err.message}) — skipping it; the rest of the document is unaffected.`
+      );
+      pages.push({ n, tree: null, items: [] });
+    }
+  }
+  return pages;
+}
+
+/**
  * @param {string} filePath - Path to a PDF
  * @param {object} [opts]
  * @param {Set<number>} [opts.pages] - 1-indexed pages to keep; all pages when absent
@@ -410,21 +443,16 @@ async function pdfToMarkdown(filePath, opts = {}) {
   }
   const keep = n => !wanted || wanted.has(n);
 
-  const { structuredMarkdown } = require('./pdf-structure');
-  const structured = await structuredMarkdown(doc, keep);
-  if (structured.coverage >= MIN_STRUCTURE_COVERAGE) {
-    await doc.cleanup();
-    return structured.markdown;
-  }
-
-  const pages = [];
-  for (let n = 1; n <= doc.numPages; n++) {
-    if (!keep(n)) continue;
-    const page = await doc.getPage(n);
-    const { items } = await page.getTextContent();
-    pages.push(linesToParagraphs(itemsToLines(items)));
-  }
+  const read = await readPages(doc, keep, filePath);
   await doc.cleanup();
+
+  const { structuredMarkdown } = require('./pdf-structure');
+  const structured = structuredMarkdown(read);
+  if (structured.coverage >= MIN_STRUCTURE_COVERAGE) return structured.markdown;
+
+  // Marked-content markers carry no `str`, so the geometry path skips them the same way
+  // it skips anything else without text.
+  const pages = read.map(({ items }) => linesToParagraphs(itemsToLines(items)));
 
   return dropRepeatedLines(pages)
     .map(paragraphs => paragraphs.join('\n\n'))

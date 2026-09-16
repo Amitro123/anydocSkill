@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Only the default branch on push: pull_request already covers every branch that has
+  # one open, and listening for both ran the whole matrix twice on each PR commit.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
 
 jobs:
@@ -30,3 +32,8 @@ jobs:
 
       - name: Integration tests
         run: npm run test:integration
+
+      # The generated corpus, whose snapshots are committed. The private corpus of real
+      # documents cannot run here, and a layer nobody can run is no signal at all.
+      - name: Corpus snapshots
+        run: npm run corpus

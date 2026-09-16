@@ -211,9 +211,10 @@ function untaggedLines(items, byId, used) {
   for (const [id, group] of byId) {
     if (used.has(id)) group.forEach(item => claimed.add(item));
   }
+  const claimedChars = [...claimed].reduce((n, i) => n + i.str.length, 0);
 
   const loose = items.filter(i => typeof i.str === 'string' && i.str.trim() && !claimed.has(i));
-  if (!loose.length) return { above: [], below: [] };
+  if (!loose.length) return { above: [], below: [], claimedChars };
 
   const claimedYs = [...claimed].map(i => i.transform[5]);
   const top = claimedYs.length ? Math.max(...claimedYs) : -Infinity;
@@ -231,38 +232,40 @@ function untaggedLines(items, byId, used) {
     const text = joinOneLine(line);
     if (text) (line[0].transform[5] > top ? above : below).push(escapeBlockMarker(text));
   }
-  return { above, below };
+  return { above, below, claimedChars };
 }
 
 /**
- * @param {object} doc - An open PDFDocumentProxy
- * @param {(n: number) => boolean} [keep] - Which 1-indexed pages to include
- * @returns {Promise<{markdown: string, coverage: number}>} coverage is the share of
- *   page text the structure tree accounted for, used to decide whether to trust it.
+ * Read a document through its structure tree.
+ *
+ * `coverage` is the share of the page's own characters the tree accounted for, counted
+ * from the text items it consumed. It used to compare the length of the rendered
+ * Markdown against the raw glyphs, which put heading hashes, table pipes and list
+ * markers the page never had into the numerator — so a document could cross the routing
+ * threshold on syntax rather than on recovered text.
+ *
+ * @param {{n: number, tree: object|null, items: object[]}[]} read - Pages already read
+ * @returns {{markdown: string, coverage: number}}
  */
-async function structuredMarkdown(doc, keep = () => true) {
+function structuredMarkdown(read) {
   const pages = [];
   let tagged = 0;
   let total = 0;
 
-  for (let n = 1; n <= doc.numPages; n++) {
-    if (!keep(n)) continue;
-    const page = await doc.getPage(n);
-    const tree = await page.getStructTree();
+  for (const { tree, items } of read) {
+    total += items.reduce((n, i) => n + (typeof i.str === 'string' ? i.str.length : 0), 0);
     if (!tree) continue;
 
-    const { items } = await page.getTextContent({ includeMarkedContent: true });
     const byId = itemsByMarkedContentId(items);
-
     const blocks = [];
     const used = new Set();
     const meta = {};
     renderNode(tree, byId, blocks, used, meta);
 
-    total += items.filter(i => typeof i.str === 'string').reduce((n2, i) => n2 + i.str.length, 0);
-    tagged += blocks.join('').length;
+    const untagged = untaggedLines(items, byId, used);
+    tagged += untagged.claimedChars;
 
-    pages.push({ blocks, continuesPrevious: !!meta.continuesPrevious, ...untaggedLines(items, byId, used) });
+    pages.push({ blocks, continuesPrevious: !!meta.continuesPrevious, ...untagged });
   }
   rejoinAcrossPages(pages);
 

@@ -81,20 +81,23 @@ async function toMarkdown(inputPath, pages = null) {
     throw new Error(`--pages only applies to PDFs; ${ext || 'this input'} has no page numbers.`);
   }
 
-  // Text input needs no conversion — go straight to RTL post-processing. anydoc
-  // rejects .txt outright, and plain text is the one thing it never needs to parse.
+  // Text input needs no conversion — go straight to RTL post-processing. The
+  // firecrawl/anydoc extractor rejects .txt outright, and plain text is the one thing
+  // that never needs parsing anyway.
   if (['.md', '.markdown', '.txt'].includes(ext)) {
     return fs.readFileSync(inputPath, 'utf8');
   }
 
-  // anydoc extracts PDF text in visual order, which scrambles Hebrew and Arabic
-  // beyond repair. pdf.js returns logical order, so PDFs go through it instead.
+  // The firecrawl/anydoc extractor returns PDF text in visual order, which scrambles
+  // Hebrew and Arabic beyond repair. pdf.js returns logical order, so PDFs are read
+  // here instead — the headline reason this tool exists rather than wrapping that one.
   if (ext === '.pdf') {
     const { pdfToMarkdown } = require('./pdf-extract');
     return pdfToMarkdown(inputPath, { pages });
   }
 
-  // anydoc flattens a deck into one continuous run, losing slide boundaries.
+  // The firecrawl/anydoc extractor flattens a deck into one continuous run, losing
+  // slide boundaries.
   if (ext === '.pptx') {
     const { pptxToMarkdown } = require('./pptx-extract');
     return pptxToMarkdown(inputPath);
@@ -105,7 +108,8 @@ async function toMarkdown(inputPath, pages = null) {
     ({ toMarkdown } = require('@firecrawl/anydoc'));
   } catch {
     throw new Error(
-      `Converting ${ext} requires anydoc. Install it with:\n\n  npm install @firecrawl/anydoc\n`
+      `Converting ${ext} needs the firecrawl/anydoc extractor. Install it with:\n\n` +
+      `  npm install @firecrawl/anydoc\n`
     );
   }
 

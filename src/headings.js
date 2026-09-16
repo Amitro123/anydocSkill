@@ -2,10 +2,10 @@
  * Promote fully bold paragraphs to headings.
  *
  * A document formatted by hand carries no heading styles, so every path here returns
- * its section titles as bold body text — the structure tree tags them P, anydoc emits
- * `**...**`, the geometry path sees only a short line. The words survive and the shape
- * is lost: nothing to navigate by, no outline, and anything reading the Markdown sees
- * one flat run of paragraphs.
+ * its section titles as bold body text — the structure tree tags them P, the
+ * firecrawl/anydoc extractor emits `**...**`, the geometry path sees only a short
+ * line. The words survive and the shape is lost: nothing to navigate by, no outline,
+ * and anything reading the Markdown sees one flat run of paragraphs.
  *
  * Bold alone does not make a heading, though. A letter emphasises whole paragraphs for
  * weight and signs off in bold, and promoting those would invent an outline the
