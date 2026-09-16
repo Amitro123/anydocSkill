@@ -157,6 +157,10 @@ Four decisions look like they could be simplified. They cannot:
 - **Pages and lines are both assembled by position, never by the order items arrive
   in.** A producer may emit a page's middle before its header, or an RTL line
   left-to-right. Neither array order is document order.
+- **A page with columns is read a column at a time.** Sorting a whole page by y
+  interleaves a sidebar into the body. Columns are only split at a vertical gutter no
+  line crosses, with at least two lines either side, so an indent or a margin note is
+  not mistaken for one — and the right-hand column comes first in Hebrew.
 - **RTL lines are ordered by position, never by the order items arrive in.** Producers
   disagree: Word emits an RTL line right-to-left, other tools emit it left-to-right.
   Trusting array order reverses every word of a line from the second kind.

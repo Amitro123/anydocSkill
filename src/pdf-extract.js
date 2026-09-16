@@ -132,13 +132,16 @@ function lineY(items) {
   return items[0].transform[5];
 }
 
+function lineLeft(items) {
+  return Math.min(...items.map(i => i.transform[4]));
+}
+
+function lineRight(items) {
+  return Math.max(...items.map(i => i.transform[4] + (i.width || 0)));
+}
+
 function lineWidth(items) {
-  let left = Infinity, right = -Infinity;
-  for (const item of items) {
-    left = Math.min(left, item.transform[4]);
-    right = Math.max(right, item.transform[4] + (item.width || 0));
-  }
-  return right - left;
+  return lineRight(items) - lineLeft(items);
 }
 
 // A line that stops well short of the column edge ends its paragraph — the usual
@@ -160,12 +163,55 @@ function medianGap(lines) {
   return gaps[Math.floor(gaps.length / 2)];
 }
 
+const MIN_COLUMN_LINES = 2;   // fewer than this either side is an indent, not a column
+
+/**
+ * Split lines at a vertical gutter no line crosses.
+ *
+ * Requiring that nothing crosses it keeps this off single-column pages, where body
+ * lines span the width and leave no gap to find. Returns null when there is no split.
+ */
+function findGutter(lines) {
+  const edges = lines.map(l => ({ left: lineLeft(l), right: lineRight(l) }));
+  const min = Math.min(...edges.map(e => e.left));
+  const max = Math.max(...edges.map(e => e.right));
+
+  let best = null;
+  for (let x = min; x <= max; x += 4) {
+    if (edges.some(e => e.left < x && e.right > x)) continue;
+
+    const left = lines.filter((_, i) => edges[i].right <= x);
+    const right = lines.filter((_, i) => edges[i].left >= x);
+    if (left.length < MIN_COLUMN_LINES || right.length < MIN_COLUMN_LINES) continue;
+
+    // Prefer the most balanced split, so a sidebar does not get cut in half.
+    const balance = Math.min(left.length, right.length);
+    if (!best || balance > best.balance) best = { left, right, balance };
+  }
+  return best;
+}
+
+/**
+ * Put a page's lines in reading order.
+ *
+ * Position rather than emission order, since producers disagree about the latter. A
+ * page with columns is read a column at a time — nearest edge first, which is the
+ * right-hand column in Hebrew — because sorting the whole page by y interleaves them.
+ */
+function orderLines(lines, rtl) {
+  const byY = () => [...lines].sort((a, b) => lineY(b) - lineY(a));
+  if (lines.length < MIN_COLUMN_LINES * 2) return byY();
+
+  const gutter = findGutter(lines);
+  if (!gutter) return byY();
+
+  const [first, second] = rtl ? [gutter.right, gutter.left] : [gutter.left, gutter.right];
+  return [...orderLines(first, rtl), ...orderLines(second, rtl)];
+}
+
 function linesToParagraphs(rawLines) {
-  // Producers do not always emit a page top to bottom: a newsletter exported from a
-  // mail tool put its middle section first, then the footer, then the header. Array
-  // order is not document order any more than it is reading order within a line, so
-  // lines are placed by their own y. A page already emitted in order is unchanged.
-  const lines = [...rawLines].sort((a, b) => lineY(b) - lineY(a));
+  const rtl = rawLines.some(l => HEBREW_OR_ARABIC.test(l.map(i => i.str).join('')));
+  const lines = orderLines(rawLines, rtl);
   const body = medianGap(lines);
   const column = columnWidth(lines);
   const paragraphs = [];
@@ -263,5 +309,5 @@ module.exports = {
   reorderLtrRuns,
   joinItems,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine, linesToParagraphs },
+  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter },
 };

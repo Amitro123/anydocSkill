@@ -211,4 +211,50 @@ const inOrder = [line(5201, 'ראש'), line(1842, 'אמצע'), line(6, 'תחתי
 assert(sequence(inOrder) === 'ראש|אמצע|תחתית',
   'a page already emitted top to bottom is unchanged');
 
+// A page with columns is read a column at a time. Sorting the whole page by y
+// interleaves them, which put a Google Docs sidebar's contents through the body.
+const at = (x, w, y, str) => [{ str, width: w, transform: [0, 0, 0, 11, x, y] }];
+
+const twoColumns = [
+  at(350, 393, 413, 'גוף-א'), at(543, 202, 377, 'גוף-ב'),   // body, right
+  at(173,  59, 419, 'צד-א'),  at(142,  54, 388, 'צד-ב'),    // sidebar, left
+];
+assert(sequence(twoColumns) === 'גוף-א|גוף-ב|צד-א|צד-ב',
+  `RTL columns read right first, each top to bottom — got ${sequence(twoColumns)}`);
+
+// The same geometry in an LTR document reads the other way round.
+const ltrColumns = [
+  at(350, 393, 413, 'body-a'), at(543, 202, 377, 'body-b'),
+  at(173,  59, 419, 'side-a'), at(142,  54, 388, 'side-b'),
+];
+assert(geo.linesToParagraphs(ltrColumns).join(' ').split(/\s+/).join('|')
+       === 'side-a|side-b|body-a|body-b',
+  'LTR columns read left first');
+
+// Single-column pages must not be split: wide lines leave no gutter to find.
+const oneColumn = [
+  at(100, 600, 700, 'שורה-א'), at(100, 600, 680, 'שורה-ב'),
+  at(100, 600, 660, 'שורה-ג'), at(100, 600, 640, 'שורה-ד'),
+];
+assert(geo.findGutter(oneColumn) === null, 'a single column has no gutter');
+assert(sequence(oneColumn) === 'שורה-א|שורה-ב|שורה-ג|שורה-ד', 'a single column stays in y order');
+
+// An indented line is not a column either.
+const indented = [
+  at(100, 600, 700, 'רגילה'), at(140, 560, 680, 'מוזחת'), at(100, 600, 660, 'רגילה2'),
+];
+assert(geo.findGutter(indented) === null, 'an indent must not be read as a column');
+
+// A lone item off in the margin — a page number, a stamp — sits behind a clean
+// gutter but is not a column. This is what MIN_COLUMN_LINES is for: without it the
+// page splits in two and the margin note is read as a section of its own.
+const marginNote = [
+  at(300, 400, 700, 'גוף-1'), at(300, 400, 680, 'גוף-2'), at(300, 400, 660, 'גוף-3'),
+  at(100,  50, 690, '7'),
+];
+assert(geo.findGutter(marginNote) === null,
+  'one line beside the body is a margin note, not a column');
+assert(sequence(marginNote) === 'גוף-1|7|גוף-2|גוף-3',
+  'a margin note stays where its y puts it');
+
 console.log('All tests passed.');
