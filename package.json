@@ -7,9 +7,19 @@
     "test": "node src/rtl.test.js",
     "convert": "node src/convert.js"
   },
-  "keywords": ["anydoc", "rtl", "hebrew", "arabic", "markdown", "document-conversion"],
+  "keywords": [
+    "anydoc",
+    "rtl",
+    "hebrew",
+    "arabic",
+    "markdown",
+    "document-conversion"
+  ],
   "license": "MIT",
   "peerDependencies": {
     "anydoc": ">=0.1.0"
+  },
+  "dependencies": {
+    "marked": "^18.0.13"
   }
 }

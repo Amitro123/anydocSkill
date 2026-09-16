@@ -1,47 +1,52 @@
-# anydoc Skill
-
-Convert documents (PDF, Word, PowerPoint, Excel, EPUB, CSV, RTF, OpenDocument) to clean Markdown using the [anydoc](https://github.com/firecrawl/anydoc) library.
-
-## Usage
-
-```
-/anydoc <file-path-or-url>
-```
-
-## What it does
-
-1. Reads the document at the given path or URL
-2. Converts it to GitHub-Flavored Markdown via anydoc
-3. Detects RTL languages (Hebrew, Arabic, Persian, Urdu) and adds proper RTL wrappers
-4. Outputs the result to `<filename>.md` in the same directory
-
-## RTL Support
-
-When the document contains RTL text (Hebrew, Arabic, etc.), the output Markdown includes:
-- `<!-- rtl -->` front-matter flag
-- HTML `<div dir="rtl" lang="he">` wrappers around RTL paragraphs
-- Document-level `dir: rtl` in YAML front-matter
-
-Detection heuristic: if more than 30% of characters in a paragraph fall in the Hebrew (`֐–׿`) or Arabic (`؀–ۿ`) Unicode blocks, the paragraph is treated as RTL.
-
-## Output format
-
-```markdown
 ---
-title: Document Title
-dir: rtl
-lang: he
+name: anydoc
+description: Convert documents (PDF, Word, PowerPoint, Excel, EPUB, CSV, RTF, OpenDocument) to Markdown and/or a styled standalone HTML page, with automatic RTL handling for Hebrew and Arabic. Use whenever the user shares a document file and wants its text extracted, converted, read, or turned into Markdown or HTML.
 ---
 
-<div dir="rtl">
+# anydoc — document conversion with RTL support
 
-...converted content...
+Wraps [anydoc](https://github.com/firecrawl/anydoc) and adds RTL (Hebrew/Arabic) direction handling plus an HTML renderer.
 
-</div>
+## Always ask for the output format first
+
+Unless the user already said which format they want, ask with `AskUserQuestion` before converting:
+
+- **Both (recommended)** — `.md` for editing and reuse, `.html` for reading and printing
+- **Markdown only** — for a repo, a CMS, or feeding an LLM
+- **HTML only** — for reading in a browser or printing to PDF
+
+Map the answer to `--format both | md | html`. If the user named a format in their
+request ("convert this to markdown"), skip the question and use it.
+
+## Running it
+
+```bash
+node src/convert.js <input-file> --format both [--out-dir <dir>]
 ```
 
-## Implementation notes
+Outputs land next to the input unless `--out-dir` is given. `--format` defaults to `both`.
 
-- Uses `anydoc` npm package (or Python `anydoc` library) for the conversion engine
-- RTL detection runs as a post-processing pass on the raw Markdown output
-- Falls back to plain Markdown if anydoc is not installed (prints install instructions)
+Markdown input (`.md`) skips the anydoc step and goes straight to RTL post-processing,
+so an existing Markdown file can be rendered to HTML without anydoc installed.
+
+## What RTL handling does
+
+`src/rtl.js` counts letters in the Hebrew (`U+0590–05FF`) and Arabic (`U+0600–06FF`)
+Unicode blocks. Above a 30% ratio the document is treated as RTL, which adds:
+
+- YAML front-matter: `dir: rtl` and `lang: he` (or `ar`)
+- A `<div dir="rtl" lang="he">` wrapper around the Markdown body
+
+`src/render-html.js` puts `dir` and `lang` on the `<html>` element itself. That matters:
+`dir` is an inherited HTML attribute, so the whole document resolves under the correct
+base direction and the Unicode bidi algorithm lays out mixed Hebrew/Latin runs (names,
+ID numbers, phone numbers, currency) correctly. CSS `direction: rtl` alone does not do
+this — it sets visual direction without giving bidi a base direction to resolve against.
+
+The generated HTML is standalone: inline CSS, no network dependencies, a Hebrew-capable
+serif stack, dark-mode support, and print rules so it exports cleanly to PDF.
+
+## After converting
+
+Tell the user where the files landed. If HTML was produced, offer to open or preview it —
+for a Hebrew document, confirming the direction looks right is worth the extra step.

@@ -1,4 +1,6 @@
+const assert = require('node:assert');
 const { addRtlSupport, rtlRatio, detectDocumentLanguage } = require('./rtl');
+const { renderHtml, parseFrontMatter } = require('./render-html');
 
 const hebrewText = `
 # הסכם כניסה להליך גישור
@@ -15,22 +17,44 @@ The parties agree to cooperate with the mediator in good faith.
 `.trim();
 
 // RTL ratio
-console.assert(rtlRatio(hebrewText) > 0.7, 'Hebrew text should have high RTL ratio');
-console.assert(rtlRatio(englishText) < 0.05, 'English text should have low RTL ratio');
+assert(rtlRatio(hebrewText) > 0.7, 'Hebrew text should have high RTL ratio');
+assert(rtlRatio(englishText) < 0.05, 'English text should have low RTL ratio');
 
 // detectDocumentLanguage
 const { dir: heDir, lang } = detectDocumentLanguage(hebrewText);
-console.assert(heDir === 'rtl', 'Hebrew doc should be RTL');
-console.assert(lang === 'he', 'Hebrew doc lang should be "he"');
+assert(heDir === 'rtl', 'Hebrew doc should be RTL');
+assert(lang === 'he', 'Hebrew doc lang should be "he"');
 
 const { dir: enDir } = detectDocumentLanguage(englishText);
-console.assert(enDir === 'ltr', 'English doc should be LTR');
+assert(enDir === 'ltr', 'English doc should be LTR');
 
 // addRtlSupport output contains expected markers
 const output = addRtlSupport(hebrewText, 'Test Doc');
-console.assert(output.includes('dir: rtl'), 'front-matter should include dir: rtl');
-console.assert(output.includes('lang: he'), 'front-matter should include lang: he');
-console.assert(output.includes('<div dir="rtl"'), 'body should be wrapped in RTL div');
-console.assert(output.includes('title: "Test Doc"'), 'front-matter should include title');
+assert(output.includes('dir: rtl'), 'front-matter should include dir: rtl');
+assert(output.includes('lang: he'), 'front-matter should include lang: he');
+assert(output.includes('<div dir="rtl"'), 'body should be wrapped in RTL div');
+assert(output.includes('title: "Test Doc"'), 'front-matter should include title');
+
+// parseFrontMatter
+const parsed = parseFrontMatter(output);
+assert(parsed.meta.dir === 'rtl', 'front-matter dir should parse');
+assert(parsed.meta.lang === 'he', 'front-matter lang should parse');
+assert(parsed.meta.title === 'Test Doc', 'quoted title should unquote');
+assert(!parsed.body.startsWith('---'), 'body should have front-matter stripped');
+
+// renderHtml — direction must live on <html>, not only in CSS
+const html = renderHtml(output);
+assert(html.includes('<html dir="rtl" lang="he">'), 'html tag should carry dir and lang');
+assert(html.includes('<title>Test Doc</title>'), 'title should render');
+assert(html.includes('<h1'), 'markdown headings should render as HTML');
+assert(!html.includes('<div dir="rtl"'), 'redundant rtl div should be unwrapped');
+
+// renderHtml — LTR documents stay LTR
+const ltrHtml = renderHtml(addRtlSupport(englishText, 'English Doc'));
+assert(ltrHtml.includes('<html dir="ltr" lang="en">'), 'English doc should render LTR');
+
+// renderHtml — tables get a scroll container
+const tableHtml = renderHtml(addRtlSupport('| א | ב |\n|---|---|\n| 1 | 2 |', 'T'));
+assert(tableHtml.includes('<div class="table-scroll"><table>'), 'tables should be wrapped');
 
 console.log('All tests passed.');
