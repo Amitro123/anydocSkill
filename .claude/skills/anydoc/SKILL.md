@@ -1,6 +1,8 @@
 ---
 name: anydoc
 description: Convert documents (PDF, Word, PowerPoint, Excel, EPUB, CSV, RTF, OpenDocument) to Markdown and/or a styled standalone HTML page, with correct right-to-left layout for Hebrew. Use whenever the user shares a document file and wants its text extracted, converted, read, or turned into Markdown or HTML.
+when_to_use: "User shares a .pdf, .docx, .pptx, .xlsx, .xls, .csv, .epub, .rtf, .odt, .doc file and wants it converted, extracted, or read. Also when ingesting documents into a knowledge base or wiki (offer --ingest). Do not use for plain text questions about documents the user has already read."
+allowed-tools: Bash, Read, AskUserQuestion
 ---
 
 # anydoc — document conversion with RTL support

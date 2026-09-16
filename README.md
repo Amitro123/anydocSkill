@@ -11,7 +11,10 @@ claude plugin install anydoc@anydoc-skill
 ```
 
 Node dependencies install automatically (`npm ci --ignore-scripts`) because this repo
-ships a `package-lock.json`. Requires Node 22.13 or later.
+ships a `package-lock.json`.
+
+> **Requires Node 22.13 or later** — check with `node -v`. The floor comes from
+> `pdfjs-dist`, which declares `>=22.13.0 || >=24`. Node 20 LTS will not install it.
 
 ## Or work on it directly
 
