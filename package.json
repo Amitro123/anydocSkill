@@ -18,6 +18,7 @@
   "license": "MIT",
   "dependencies": {
     "@firecrawl/anydoc": "^0.2.4",
-    "marked": "^18.0.13"
+    "marked": "^18.0.13",
+    "pdfjs-dist": "^6.3.289"
   }
 }

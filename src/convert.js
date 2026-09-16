@@ -32,6 +32,13 @@ async function toMarkdown(inputPath) {
     return fs.readFileSync(inputPath, 'utf8');
   }
 
+  // anydoc extracts PDF text in visual order, which scrambles Hebrew and Arabic
+  // beyond repair. pdf.js returns logical order, so PDFs go through it instead.
+  if (ext === '.pdf') {
+    const { pdfToMarkdown } = require('./pdf-extract');
+    return pdfToMarkdown(inputPath);
+  }
+
   let toMarkdown;
   try {
     ({ toMarkdown } = require('@firecrawl/anydoc'));

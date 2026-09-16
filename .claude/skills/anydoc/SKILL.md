@@ -46,20 +46,19 @@ this — it sets visual direction without giving bidi a base direction to resolv
 The generated HTML is standalone: inline CSS, no network dependencies, a Hebrew-capable
 serif stack, dark-mode support, and print rules so it exports cleanly to PDF.
 
-## Known limitation: Hebrew PDFs
+## PDFs use pdf.js, not anydoc
 
-anydoc's PDF extractor emits Hebrew in visual rather than logical order — every word
-comes out character-reversed (`רושיג` for `גישור`). The text is scrambled before any
-RTL handling runs, so no amount of `dir` handling can fix it downstream.
+anydoc's PDF extractor emits Hebrew in visual order — every word character-reversed
+(`רושיג` for `גישור`). The text is scrambled before any RTL handling runs, so nothing
+downstream can fix it. PDFs are therefore routed through `src/pdf-extract.js`, built on
+pdf.js, which returns logical reading order.
 
-`convert.js` detects this and refuses to write the output. The check counts Hebrew
-final-form letters (ך ם ן ף ץ), which occur only at the end of a word in correct
-Hebrew and only at the start in reversed text — a clean signal, not a guess.
+Every extraction is still checked for visual order regardless of source. The check
+counts Hebrew final forms (ך ם ן ף ץ), which occur only at the end of a word in correct
+Hebrew and only at the start in reversed text — a clean signal, not a guess. On failure
+`convert.js` refuses to write; `--force` overrides.
 
-When it trips, prefer the original `.docx`, which extracts correctly. `--force`
-writes the output anyway, for cases where the layout matters more than the text.
-
-Arabic is likely affected the same way but has not been verified.
+Arabic is likely affected by the same anydoc bug but has not been verified.
 
 ## After converting
 

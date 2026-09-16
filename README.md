@@ -49,18 +49,25 @@ bidirectional algorithm a base direction to resolve against, so mixed Hebrew/Lat
 names, ID numbers, phone numbers, currency — lay out correctly. CSS `direction` sets
 visual direction without supplying that base, and mixed content comes out wrong.
 
-## Known limitation: Hebrew PDFs
+## PDFs go through pdf.js, not anydoc
 
 anydoc's PDF path extracts Hebrew in visual order, so every word arrives
-character-reversed (`רושיג` instead of `גישור`). Verified against pdf.js, which
-extracts the same file correctly — the PDF's text layer is fine, the extractor is not.
+character-reversed (`רושיג` instead of `גישור`) — unreadable and unsearchable, and
+unrecoverable downstream since the text is scrambled before any RTL handling runs.
 
-`convert.js` detects this and exits rather than writing unreadable output. Detection
-counts Hebrew final-form letters (ך ם ן ף ץ): they appear only at the end of a word in
-correct Hebrew and only at the start in reversed text. On a real 21-clause agreement the
-split was 241 leading / 0 trailing, versus 0 / 22 for the same content as `.docx`.
+`src/pdf-extract.js` handles PDFs with pdf.js instead, which returns text items in
+logical reading order. It reconstructs lines from `hasEOL` and groups them into
+paragraphs by line gap and line width, drops headers and footers that repeat on every
+page, and leaves source numbering as literal text so clause numbers in legal documents
+are never renumbered.
 
-Use the `.docx` source where one exists, or pass `--force` to write anyway.
+`convert.js` still runs a visual-order check on every extraction, whichever path
+produced it, and refuses to write scrambled output. Detection counts Hebrew final-form
+letters (ך ם ן ף ץ): they appear only word-finally in correct Hebrew and only
+word-initially in reversed text. On a real 21-clause agreement, anydoc scored
+241 leading / 0 trailing; pdf.js scores 0 / 241 on the same file.
+
+Pass `--force` to write output that fails the check.
 
 ## RTL detection threshold
 
