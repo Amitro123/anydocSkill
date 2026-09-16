@@ -432,7 +432,7 @@ async function pdfToMarkdown(filePath, opts = {}) {
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
 
   if (wanted) {
-    const missing = [...wanted].filter(n => n < 1 || n > doc.numPages);
+    const missing = wanted.beyond(doc.numPages);
     if (missing.length) {
       await doc.cleanup();
       throw new Error(

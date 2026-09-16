@@ -27,6 +27,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Version consistency
+        run: npm run test:versions
+
       - name: Unit tests
         run: npm run test:unit
 
