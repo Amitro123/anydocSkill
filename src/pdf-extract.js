@@ -238,19 +238,45 @@ function linesToParagraphs(rawLines) {
   return paragraphs;
 }
 
-// Headers and footers repeat verbatim on every page; body text does not.
-function dropRepeatedLines(pages) {
-  if (pages.length < 2) return pages;
+// Above this share of the document, what repeats is the document rather than its
+// furniture, and dropping it would delete the content.
+const MAX_REPEATED_SHARE = 0.5;
+
+/**
+ * The texts that repeat on every page and are page furniture rather than content.
+ *
+ * Headers and footers repeat verbatim on every page and body text does not, so
+ * repetition alone usually identifies them. It stops meaning that when the pages are
+ * copies of one template — two tickets from the same order, the same form filled
+ * twice — where nearly everything repeats and almost none of it is furniture. A
+ * header is a small part of a page, so a repeated share that large is the signal to
+ * keep everything.
+ *
+ * @param {string[][]} candidates - per page, the texts eligible to be furniture
+ * @param {number[]} pageSizes - per page, how many blocks the page holds in total
+ * @returns {Set<string>}
+ */
+function repeatedFurniture(candidates, pageSizes) {
+  if (candidates.length < 2) return new Set();
 
   const counts = new Map();
-  for (const paragraphs of pages) {
-    for (const text of new Set(paragraphs)) {
-      counts.set(text, (counts.get(text) || 0) + 1);
-    }
+  for (const texts of candidates) {
+    for (const text of new Set(texts)) counts.set(text, (counts.get(text) || 0) + 1);
   }
-  return pages.map(paragraphs =>
-    paragraphs.filter(text => counts.get(text) < pages.length)
+  const furniture = new Set(
+    [...counts].filter(([, n]) => n === candidates.length).map(([text]) => text)
   );
+
+  const total = pageSizes.reduce((a, b) => a + b, 0);
+  const repeated = candidates.reduce(
+    (n, texts) => n + texts.filter(text => furniture.has(text)).length, 0
+  );
+  return repeated > total * MAX_REPEATED_SHARE ? new Set() : furniture;
+}
+
+function dropRepeatedLines(pages) {
+  const furniture = repeatedFurniture(pages, pages.map(p => p.length));
+  return pages.map(paragraphs => paragraphs.filter(text => !furniture.has(text)));
 }
 
 // Below this share of page text, the structure tree is not describing the whole
@@ -308,6 +334,7 @@ module.exports = {
   pdfToMarkdown,
   reorderLtrRuns,
   joinItems,
+  repeatedFurniture,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter },
+  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines },
 };

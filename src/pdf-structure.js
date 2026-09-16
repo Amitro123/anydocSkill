@@ -16,7 +16,7 @@
  * however well this reads the tree.
  */
 
-const { joinItems, _internals: { joinOneLine } } = require('./pdf-extract');
+const { joinItems, repeatedFurniture, _internals: { joinOneLine } } = require('./pdf-extract');
 
 const HEADING_ROLES = { H1: 1, H2: 2, H3: 3, H4: 4, H5: 5, H6: 6 };
 
@@ -211,15 +211,15 @@ async function structuredMarkdown(doc, keep = () => true) {
   };
 }
 
-// Furniture is what repeats on every page; anything appearing once is content.
+// Only the untagged text can be furniture here — the tree already told us the rest is
+// content — and of that, only what repeats on every page. Same test as the geometry
+// path, so a PDF converts the same whether or not it carries a structure tree.
 function assemble(pages) {
-  const counts = new Map();
-  for (const { above, below } of pages) {
-    for (const text of new Set([...above, ...below])) {
-      counts.set(text, (counts.get(text) || 0) + 1);
-    }
-  }
-  const keep = text => pages.length < 2 || counts.get(text) < pages.length;
+  const furniture = repeatedFurniture(
+    pages.map(p => [...p.above, ...p.below]),
+    pages.map(p => p.blocks.length + p.above.length + p.below.length)
+  );
+  const keep = text => !furniture.has(text);
 
   return pages
     .flatMap(p => [...p.above.filter(keep), ...p.blocks, ...p.below.filter(keep)])

@@ -241,6 +241,31 @@ for (const bad of ['0', '3-1', 'x', '']) {
   assert(threw, `"${bad}" must be rejected as a page spec`);
 }
 
+// Repeated text is furniture only while it stays a small part of the document.
+const { repeatedFurniture, _internals: { dropRepeatedLines } } = require('./pdf-extract');
+const sizes = pages => pages.map(p => p.length);
+
+const withFooter = [
+  ['כותרת המסמך', 'פסקה ראשונה', 'עוד טקסט', 'רשימה', 'עתיד האוטומציה'],
+  ['המשך המסמך', 'פסקה שנייה', 'סיכום', 'נספח', 'עתיד האוטומציה'],
+];
+assert([...repeatedFurniture(withFooter, sizes(withFooter))].join() === 'עתיד האוטומציה',
+  'a footer repeating on every page is furniture');
+assert(!dropRepeatedLines(withFooter).flat().includes('עתיד האוטומציה'),
+  'and must be dropped from the output');
+
+// Two tickets from one order: the pages are copies of a template, so almost everything
+// repeats and almost none of it is furniture. Dropping it deleted both tickets.
+const tickets = [
+  ['מס\' כרטיס', 'FC41P', 'סטטוס תשלום', 'שולם', 'זמן ומיקום', '₪59 – ילד'],
+  ['מס\' כרטיס', 'FC43C', 'סטטוס תשלום', 'שולם', 'זמן ומיקום', '₪39 – מבוגר'],
+];
+assert(repeatedFurniture(tickets, sizes(tickets)).size === 0,
+  'when most of the page repeats, the repetition is the document, not its furniture');
+assert(dropRepeatedLines(tickets).flat().length === 12, 'so every line survives');
+
+assert(repeatedFurniture([['לבד']], [1]).size === 0, 'one page has nothing to repeat against');
+
 // A page must be assembled by position too: one producer emitted a newsletter's
 // middle section first, then its footer, then its header.
 const line = (y, str) => [{ str, transform: [0, 0, 0, 11, 100, y] }];

@@ -95,6 +95,10 @@ repeats on every page converted. Convert one page and the strip is kept, because
 that appears once is content — often the only place a company name or a contact detail
 appears. This holds for tagged and untagged PDFs alike.
 
+Repetition also stops counting as furniture once it covers more than half the document.
+Pages that are copies of one template — two tickets from the same order, the same form
+filled twice — repeat nearly everything, and almost none of it is a header.
+
 **Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
 returns nothing and you get an empty document — the command warns when this happens. Add
 a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
