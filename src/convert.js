@@ -10,14 +10,15 @@
 
 const path = require('path');
 const fs = require('fs');
-const { addRtlSupport } = require('./rtl');
+const { addRtlSupport, detectVisualOrder } = require('./rtl');
 const { renderHtml } = require('./render-html');
 
 function parseArgs(argv) {
-  const args = { format: 'both', outDir: null, input: null };
+  const args = { format: 'both', outDir: null, input: null, force: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--format') args.format = argv[++i];
     else if (argv[i] === '--out-dir') args.outDir = argv[++i];
+    else if (argv[i] === '--force') args.force = true;
     else if (!args.input) args.input = argv[i];
   }
   return args;
@@ -43,12 +44,27 @@ async function toMarkdown(inputPath) {
   return toMarkdown(inputPath);
 }
 
-async function convert({ input, format, outDir }) {
+async function convert({ input, format, outDir, force }) {
   const title = path.basename(input, path.extname(input));
   const dir = outDir || path.dirname(input);
   fs.mkdirSync(dir, { recursive: true });
 
   const raw = await toMarkdown(input);
+
+  const order = detectVisualOrder(raw);
+  if (order.reversed && !force) {
+    throw new Error(
+      `Extracted Hebrew is in visual order — every word is character-reversed.\n` +
+      `(${order.leading} words start with a final-form letter, ${order.trailing} end with one.)\n\n` +
+      `This is an anydoc PDF extraction bug for RTL scripts, not a rendering problem:\n` +
+      `the text is already scrambled before any RTL handling runs, so the output would\n` +
+      `be unreadable and unsearchable.\n\n` +
+      `Options:\n` +
+      `  - Convert from the original .docx instead, which extracts correctly\n` +
+      `  - Re-run with --force to write the output anyway\n`
+    );
+  }
+
   const markdown = addRtlSupport(raw, title);
   const written = [];
 

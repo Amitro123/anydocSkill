@@ -1,5 +1,5 @@
 const assert = require('node:assert');
-const { addRtlSupport, rtlRatio, detectDocumentLanguage } = require('./rtl');
+const { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder } = require('./rtl');
 const { renderHtml, parseFrontMatter } = require('./render-html');
 
 const hebrewText = `
@@ -56,5 +56,17 @@ assert(ltrHtml.includes('<html dir="ltr" lang="en">'), 'English doc should rende
 // renderHtml — tables get a scroll container
 const tableHtml = renderHtml(addRtlSupport('| א | ב |\n|---|---|\n| 1 | 2 |', 'T'));
 assert(tableHtml.includes('<div class="table-scroll"><table>'), 'tables should be wrapped');
+
+// detectVisualOrder — catches extractors that emit RTL text word-reversed
+const good = detectVisualOrder('שמות הצדדים הסכם כניסה להליך גישור מתחייבים בתום');
+assert(!good.reversed, 'correct Hebrew should not be flagged as reversed');
+assert(good.trailing > good.leading, 'correct Hebrew ends words with final forms');
+
+const bad = detectVisualOrder('םידדצה תומש רושיג ךילהל הסינכ םכסה םיבייחתמ םותב');
+assert(bad.reversed, 'reversed Hebrew should be flagged');
+assert(bad.leading > bad.trailing, 'reversed Hebrew starts words with final forms');
+
+assert(!detectVisualOrder(englishText).reversed, 'English must never be flagged');
+assert(!detectVisualOrder('שלום').reversed, 'a short sample must not trip the detector');
 
 console.log('All tests passed.');

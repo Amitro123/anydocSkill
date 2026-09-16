@@ -40,6 +40,28 @@ function detectScript(text) {
   return 'und';
 }
 
+// Hebrew final forms (sofit) occur only as the last letter of a word. Text captured
+// in visual rather than logical order reverses each word, so they surface at the front
+// instead — a near-deterministic signal that an extractor mangled the text.
+const HEBREW_FINALS = new Set(['ך', 'ם', 'ן', 'ף', 'ץ']);
+
+/**
+ * Detect Hebrew captured in visual order (each word character-reversed).
+ * @returns {{reversed: boolean, leading: number, trailing: number}}
+ */
+function detectVisualOrder(text) {
+  let leading = 0, trailing = 0;
+
+  for (const word of text.split(/\s+/)) {
+    const letters = [...word].filter(isRtlChar);
+    if (letters.length < 2) continue;
+    if (HEBREW_FINALS.has(letters[0])) leading++;
+    if (HEBREW_FINALS.has(letters[letters.length - 1])) trailing++;
+  }
+
+  return { reversed: leading > trailing && leading > 2, leading, trailing };
+}
+
 /**
  * Add RTL front-matter and wrap RTL paragraphs.
  * @param {string} markdown - Raw Markdown from anydoc
@@ -66,4 +88,4 @@ function addRtlSupport(markdown, title = '') {
   return `${frontMatter}\n\n${body}`;
 }
 
-module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage };
+module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder };

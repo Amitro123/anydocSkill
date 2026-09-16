@@ -49,6 +49,19 @@ bidirectional algorithm a base direction to resolve against, so mixed Hebrew/Lat
 names, ID numbers, phone numbers, currency — lay out correctly. CSS `direction` sets
 visual direction without supplying that base, and mixed content comes out wrong.
 
+## Known limitation: Hebrew PDFs
+
+anydoc's PDF path extracts Hebrew in visual order, so every word arrives
+character-reversed (`רושיג` instead of `גישור`). Verified against pdf.js, which
+extracts the same file correctly — the PDF's text layer is fine, the extractor is not.
+
+`convert.js` detects this and exits rather than writing unreadable output. Detection
+counts Hebrew final-form letters (ך ם ן ף ץ): they appear only at the end of a word in
+correct Hebrew and only at the start in reversed text. On a real 21-clause agreement the
+split was 241 leading / 0 trailing, versus 0 / 22 for the same content as `.docx`.
+
+Use the `.docx` source where one exists, or pass `--force` to write anyway.
+
 ## RTL detection threshold
 
 A document is treated as RTL when > 30% of its letter characters fall in the Hebrew
