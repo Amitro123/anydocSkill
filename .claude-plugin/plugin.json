@@ -6,7 +6,7 @@
   "author": {
     "name": "Amit Rosen"
   },
-  "repository": "https://github.com/Amitro123/anydoceSkill",
+  "repository": "https://github.com/Amitro123/anydocSkill",
   "license": "MIT",
   "keywords": ["documents", "markdown", "pdf", "rtl", "hebrew"],
   "skills": "./.claude/skills/"
