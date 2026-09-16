@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "anydoc",
-      "source": "./",
+      "source": { "source": "github", "repo": "Amitro123/anydoceSkill" },
       "description": "Convert PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown and to a standalone HTML page, with correct right-to-left layout for Hebrew."
     }
   ]
