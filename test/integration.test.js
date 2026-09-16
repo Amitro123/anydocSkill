@@ -80,7 +80,7 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
 
   const { md } = convert(deck, 'md', ['--ingest']);
   assert(/^source_type: pptx$/m.test(md), 'source type comes from the extension');
-  assert(md.includes(`source_location: ${deck}`), 'source location is the path as given');
+  assert(md.includes(`source_location: ${JSON.stringify(deck)}`), 'source location is the path as given');
   assert(md.includes(`extracted_at: ${today}`), 'extraction date is recorded');
   assert(/^content_mode: verbatim$/m.test(md), 'content mode is recorded');
   assert(md.includes('> **Source:** deck.pptx, extracted by anydocSkill on '),
@@ -244,7 +244,7 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
 // --- Provenance is recorded, which is what catches a cross-format overwrite ---
 {
   const { md } = convert(fx.writeCsv(dir));
-  assert(/^source: table\.csv$/m.test(md), 'front-matter should record the source file');
+  assert(/^source: "table\.csv"$/m.test(md), 'front-matter should record the source file');
 }
 
 // --- Exit codes are a contract for callers in any language (issue #2) ---

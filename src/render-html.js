@@ -7,7 +7,7 @@
  * alone does not do this reliably.
  */
 
-const { marked } = require('marked');
+const { Marked } = require('marked');
 
 function parseFrontMatter(markdown) {
   const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
@@ -16,7 +16,15 @@ function parseFrontMatter(markdown) {
   const meta = {};
   for (const line of match[1].split(/\r?\n/)) {
     const kv = line.match(/^(\w+):\s*(.*)$/);
-    if (kv) meta[kv[1]] = kv[2].trim().replace(/^"(.*)"$/, '$1');
+    if (!kv) continue;
+    const raw = kv[2].trim();
+    // Fields that can hold arbitrary text are written as JSON strings, so a quote or a
+    // colon in a filename survives the round trip instead of truncating the value.
+    try {
+      meta[kv[1]] = raw.startsWith('"') ? JSON.parse(raw) : raw;
+    } catch {
+      meta[kv[1]] = raw.replace(/^"(.*)"$/, '$1');
+    }
   }
   return { meta, body: markdown.slice(match[0].length) };
 }
@@ -113,6 +121,32 @@ function documentCss(dir) {
  * Notes are emitted as one blockquote with no nesting, so matching the first
  * closing tag is exact rather than a guess at balance.
  */
+// The one marker this tool writes into the Markdown itself, which the renderer below
+// has to let through so slideNotesToAsides can turn it into an <aside>.
+const SLIDE_NOTES_MARKER = /^<!-- Slide \d+ notes -->$/;
+
+/**
+ * Render Markdown with every raw tag escaped to text.
+ *
+ * Nothing converted here is trusted: a `.md` can carry a `<script>`, and so can a PDF
+ * or a Word file whose text happens to look like a tag — the geometry path joins glyphs
+ * into paragraphs and Markdown reads inline HTML inside a paragraph as raw HTML. The
+ * page this produces is meant to be opened, printed, and with `--ingest` stored in a
+ * knowledge base, so a document that carries markup must not be able to execute it.
+ *
+ * Built once rather than per call: `marked.use` accumulates onto the shared instance,
+ * so configuring inside the render function stacks a copy on every document.
+ */
+const renderer = new Marked({
+  gfm: true,
+  breaks: false,
+  renderer: {
+    html: token => (SLIDE_NOTES_MARKER.test(token.text.trim())
+      ? token.text
+      : escapeHtml(token.text)),
+  },
+});
+
 function slideNotesToAsides(html, dir) {
   return html.replace(
     /<!-- Slide (\d+) notes -->\s*<blockquote>([\s\S]*?)<\/blockquote>/g,
@@ -132,8 +166,7 @@ function renderHtml(markdown, opts = {}) {
   const lang = meta.lang || (dir === 'rtl' ? 'he' : 'en');
   const title = opts.title || meta.title || 'Document';
 
-  marked.use({ gfm: true, breaks: false });
-  let content = marked.parse(dir === 'rtl' ? unwrapRtlDiv(body) : body);
+  let content = renderer.parse(dir === 'rtl' ? unwrapRtlDiv(body) : body);
 
   // Tables need their own scroll container so the page never scrolls sideways.
   content = content.replace(/<table>/g, '<div class="table-scroll"><table>')
@@ -146,6 +179,9 @@ function renderHtml(markdown, opts = {}) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="anydocSkill">${meta.source
+  ? `\n<meta name="source" content="${escapeHtml(meta.source)}">`
+  : ''}
 <title>${escapeHtml(title)}</title>
 <style>${documentCss(dir)}
 </style>

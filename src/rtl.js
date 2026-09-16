@@ -45,22 +45,37 @@ function detectScript(text) {
 // in visual rather than logical order reverses each word, so they surface at the front
 // instead — a near-deterministic signal that an extractor mangled the text.
 const HEBREW_FINALS = new Set(['ך', 'ם', 'ן', 'ף', 'ץ']);
+const isHebrewChar = ch => ch.codePointAt(0) >= 0x0590 && ch.codePointAt(0) <= 0x05ff;
+
+// Below this many Hebrew words the tallies are noise: a single word that happens to end
+// in a final form decides the answer on its own.
+const MIN_SAMPLE = 3;
 
 /**
  * Detect Hebrew captured in visual order (each word character-reversed).
- * @returns {{reversed: boolean, leading: number, trailing: number}}
+ *
+ * The signal reads final forms, so it is Hebrew by construction — no other script has
+ * them — and it needs a few words before the counts mean anything. Both limits are
+ * reported instead of being folded into `reversed`, because "not reversed" and "cannot
+ * tell" are different answers and only one of them is safe to act on. A two-line
+ * receipt and an Arabic document both land in the second, and used to be reported as
+ * the first.
+ *
+ * @returns {{reversed: boolean, judged: boolean, leading: number, trailing: number, words: number}}
  */
 function detectVisualOrder(text) {
-  let leading = 0, trailing = 0;
+  let leading = 0, trailing = 0, words = 0;
 
   for (const word of text.split(/\s+/)) {
-    const letters = [...word].filter(isRtlChar);
+    const letters = [...word].filter(isHebrewChar);
     if (letters.length < 2) continue;
+    words++;
     if (HEBREW_FINALS.has(letters[0])) leading++;
     if (HEBREW_FINALS.has(letters[letters.length - 1])) trailing++;
   }
 
-  return { reversed: leading > trailing && leading > 2, leading, trailing };
+  const judged = words >= MIN_SAMPLE;
+  return { reversed: judged && leading > trailing, judged, leading, trailing, words };
 }
 
 const RLM = '‏';  // U+200F RIGHT-TO-LEFT MARK
@@ -107,8 +122,8 @@ function addRtlSupport(markdown, opts = {}) {
 
   const frontMatter = [
     '---',
-    title ? `title: "${title}"` : null,
-    source ? `source: ${source}` : null,
+    title ? yamlField('title', title) : null,
+    source ? yamlField('source', source) : null,
     ...ingestFields(ingest),
     `dir: ${dir}`,
     lang ? `lang: ${lang}` : null,
@@ -135,10 +150,21 @@ function ingestFields(ingest) {
   if (!ingest) return [];
   return [
     `source_type: ${ingest.type}`,
-    `source_location: ${ingest.location}`,
+    yamlField('source_location', ingest.location),
     `extracted_at: ${ingest.extractedAt}`,
     'content_mode: verbatim',
   ];
 }
+
+/**
+ * Emit one front-matter field, quoted so no value can break out of it.
+ *
+ * A filename can hold a quote, a colon or a newline, and a field built by interpolation
+ * then either corrupts the block or injects a key of its own. `--ingest` exists to make
+ * a stored document self-describing and the overwrite guard reads `source:` back out,
+ * so a field a filename can forge defeats both. JSON string syntax is valid YAML, which
+ * makes the escaping someone else's solved problem.
+ */
+const yamlField = (key, value) => `${key}: ${JSON.stringify(String(value))}`;
 
 module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder, markRtlLines };
