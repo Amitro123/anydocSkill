@@ -61,7 +61,7 @@ function documentCss(dir) {
   ol, ul { padding-inline-start: 1.5rem; margin: 0 0 1rem; }
   li { margin-bottom: .6rem; }
   hr { border: 0; border-top: 1px solid #ddd9d0; margin: 2rem 0; }
-  blockquote {
+  blockquote, aside[data-slide] {
     margin: 1rem 0;
     padding-inline-start: 1rem;
     border-inline-start: 3px solid #9b7d3a;
@@ -92,7 +92,7 @@ function documentCss(dir) {
     th { background: #252320; }
     th, td, hr { border-color: #302e28; }
     code, pre { background: #242220; }
-    blockquote { color: #9a9590; }
+    blockquote, aside[data-slide] { color: #9a9590; }
   }
 
   @media print {
@@ -104,6 +104,20 @@ function documentCss(dir) {
     body { padding: 1.5rem 1rem; }
     main { padding: 1.75rem 1.25rem; }
   }`;
+}
+
+/**
+ * Turn the slide-notes marker and the blockquote after it into a single <aside>
+ * carrying the slide number, so notes stay addressable once rendered.
+ *
+ * Notes are emitted as one blockquote with no nesting, so matching the first
+ * closing tag is exact rather than a guess at balance.
+ */
+function slideNotesToAsides(html, dir) {
+  return html.replace(
+    /<!-- Slide (\d+) notes -->\s*<blockquote>([\s\S]*?)<\/blockquote>/g,
+    (_, slide, body) => `<aside data-slide="${slide}" dir="${dir}">${body}</aside>`
+  );
 }
 
 /**
@@ -124,6 +138,8 @@ function renderHtml(markdown, opts = {}) {
   // Tables need their own scroll container so the page never scrolls sideways.
   content = content.replace(/<table>/g, '<div class="table-scroll"><table>')
                    .replace(/<\/table>/g, '</table></div>');
+
+  content = slideNotesToAsides(content, dir);
 
   return `<!doctype html>
 <html dir="${dir}" lang="${lang}">

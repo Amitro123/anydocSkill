@@ -16,9 +16,9 @@ const fx = require('./fixtures');
 const CLI = path.join(__dirname, '..', 'src', 'convert.js');
 const dir = fx.tempDir();
 
-function convert(input, format = 'both') {
-  const out = path.join(dir, 'out', path.basename(input).replace(/\W/g, '_'));
-  execFileSync(process.execPath, [CLI, input, '--format', format, '--out-dir', out],
+function convert(input, format = 'both', extra = []) {
+  const out = path.join(dir, 'out', path.basename(input).replace(/\W/g, '_') + extra.join(''));
+  execFileSync(process.execPath, [CLI, input, '--format', format, '--out-dir', out, ...extra],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
   const base = path.basename(input, path.extname(input));
@@ -62,6 +62,31 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(html.includes('dir="rtl"'), 'txt: html carries direction');
 }
 
+// --- Slide notes carry their slide number, in both outputs (issue #4) ---
+{
+  const { md, html } = convert(fx.writePptx(dir));
+  assert(md.includes('<!-- Slide 1 notes -->'), 'markdown notes carry a slide marker');
+  assert(/<aside data-slide="1" dir="rtl">/.test(html), 'html notes become an addressable aside');
+  assert(!html.includes('<!-- Slide 1 notes -->'), 'the marker is consumed in HTML');
+}
+
+// --- --ingest adds knowledge-base metadata, and only when asked (issue #1) ---
+{
+  const deck = fx.writePptx(dir);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const plain = convert(deck).md;
+  assert(!/source_type:/.test(plain), 'ingest fields must stay opt-in');
+
+  const { md } = convert(deck, 'md', ['--ingest']);
+  assert(/^source_type: pptx$/m.test(md), 'source type comes from the extension');
+  assert(md.includes(`source_location: ${deck}`), 'source location is the path as given');
+  assert(md.includes(`extracted_at: ${today}`), 'extraction date is recorded');
+  assert(/^content_mode: verbatim$/m.test(md), 'content mode is recorded');
+  assert(md.includes('> **Source:** deck.pptx, extracted by anydoceSkill on '),
+    'the source notice is prepended');
+}
+
 // --- PowerPoint: slide boundaries, notes, no page furniture ---
 {
   const { md } = convert(fx.writePptx(dir));
@@ -97,16 +122,42 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(/^source: table\.csv$/m.test(md), 'front-matter should record the source file');
 }
 
-// --- A missing input fails clearly rather than surfacing a raw io error ---
+// --- Exit codes are a contract for callers in any language (issue #2) ---
 {
-  let message = '';
+  let message = '', status = 0;
   try {
     execFileSync(process.execPath, [CLI, path.join(dir, 'nope.docx')],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
     message = err.stderr || '';
+    status = err.status;
   }
   assert(/No such file/.test(message), `missing input should be named, got: ${message.trim()}`);
+  assert(status === 1, `an ordinary failure exits 1, got ${status}`);
+
+  // Scrambled text must be distinguishable from any other failure without
+  // parsing stderr, which is what a Python or shell caller needs.
+  const reversed = path.join(dir, 'reversed.txt');
+  fs.writeFileSync(reversed,
+    'םידדצה תומש רושיג ךילהל הסינכ םכסה םיבייחתמ םותב ןוצרמ םכסה\n', 'utf8');
+
+  let visualStatus = 0, visualErr = '';
+  try {
+    execFileSync(process.execPath, [CLI, reversed, '--format', 'md', '--out-dir', dir],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    visualStatus = err.status;
+    visualErr = err.stderr || '';
+  }
+  assert(visualStatus === 2, `a visual-order rejection exits 2, got ${visualStatus}`);
+  assert(/visual order/.test(visualErr), 'the rejection explains itself on stderr');
+  assert(!fs.existsSync(path.join(dir, 'reversed.md')), 'nothing is written on rejection');
+
+  // --force overrides it, and then the run succeeds.
+  execFileSync(process.execPath,
+    [CLI, reversed, '--format', 'md', '--out-dir', dir, '--force'],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert(fs.existsSync(path.join(dir, 'reversed.md')), '--force writes the output anyway');
 }
 
 fs.rmSync(dir, { recursive: true, force: true });

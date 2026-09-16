@@ -25,6 +25,15 @@ Output lands next to the input unless `--out-dir` is given.
 this repository rather than through an install, use `node src/convert.js` instead — the
 converter is the same, only the path differs.
 
+## When the user is ingesting into a knowledge base
+
+If they mention a wiki, an index, a knowledge base, or storing the output somewhere
+rather than reading it, offer `--ingest`. It adds `source_type`, `source_location`,
+`extracted_at` and `content_mode` to the front-matter and prepends a source notice, so
+the stored document carries its own provenance.
+
+Do not add it by default — it is noise for someone who just wants to read the document.
+
 ## What to tell the user afterwards
 
 Say where the files landed. If HTML was produced from a Hebrew document, offer to open

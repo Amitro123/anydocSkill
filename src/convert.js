@@ -4,9 +4,17 @@
  *
  * Usage:
  *   node convert.js <input-file> [--format md|html|both] [--out-dir <dir>]
+ *                                [--ingest] [--force]
  *
- * Defaults to --format both.
+ * Exit codes are part of the interface, so callers in any language can tell a
+ * scrambled-text rejection from an ordinary failure without parsing stderr:
+ *   0  success
+ *   1  failure (missing file, unsupported format, bad arguments)
+ *   2  extraction returned text in visual order and was refused
  */
+
+const EXIT_FAILURE = 1;
+const EXIT_VISUAL_ORDER = 2;
 
 const path = require('path');
 const fs = require('fs');
@@ -14,11 +22,12 @@ const { addRtlSupport, detectVisualOrder } = require('./rtl');
 const { renderHtml } = require('./render-html');
 
 function parseArgs(argv) {
-  const args = { format: 'both', outDir: null, input: null, force: false };
+  const args = { format: 'both', outDir: null, input: null, force: false, ingest: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--format') args.format = argv[++i];
     else if (argv[i] === '--out-dir') args.outDir = argv[++i];
     else if (argv[i] === '--force') args.force = true;
+    else if (argv[i] === '--ingest') args.ingest = true;
     else if (!args.input) args.input = argv[i];
   }
   return args;
@@ -58,7 +67,7 @@ async function toMarkdown(inputPath) {
   return toMarkdown(inputPath);
 }
 
-async function convert({ input, format, outDir, force }) {
+async function convert({ input, format, outDir, force, ingest }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
 
   const title = path.basename(input, path.extname(input));
@@ -67,9 +76,20 @@ async function convert({ input, format, outDir, force }) {
 
   const raw = await toMarkdown(input);
 
+  // A PDF that was scanned but never OCR'd has no text layer, so extraction
+  // succeeds and returns nothing. Writing an empty document without a word about
+  // why leaves the user with no way to tell that from a broken converter.
+  if (!raw.replace(/\s/g, '')) {
+    console.warn(
+      `Warning: no text found in ${path.basename(input)} — the output will be empty.\n` +
+      `If this is a scan, it has no text layer yet; add one first (for example with ` +
+      `ocrmypdf) and convert the result.`
+    );
+  }
+
   const order = detectVisualOrder(raw);
   if (order.reversed && !force) {
-    throw new Error(
+    throw Object.assign(new Error(
       `Extracted Hebrew is in visual order — every word is character-reversed.\n` +
       `(${order.leading} words start with a final-form letter, ${order.trailing} end with one.)\n\n` +
       `The extractor returned visual rather than logical order, so the text was\n` +
@@ -78,10 +98,18 @@ async function convert({ input, format, outDir, force }) {
       `Options:\n` +
       `  - Convert from an original .docx or .pptx instead, which extract correctly\n` +
       `  - Re-run with --force to write the output anyway\n`
-    );
+    ), { exitCode: EXIT_VISUAL_ORDER });
   }
 
-  const markdown = addRtlSupport(raw, title, path.basename(input));
+  const markdown = addRtlSupport(raw, {
+    title,
+    source: path.basename(input),
+    ingest: ingest ? {
+      type: path.extname(input).slice(1).toLowerCase(),
+      location: input,
+      extractedAt: new Date().toISOString().slice(0, 10),
+    } : null,
+  });
   const written = [];
 
   // report.docx and report.pdf both target report.md, so a second conversion would
@@ -116,7 +144,11 @@ async function convert({ input, format, outDir, force }) {
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.input) {
-  console.error('Usage: node convert.js <input-file> [--format md|html|both] [--out-dir <dir>]');
-  process.exit(1);
+  console.error('Usage: node convert.js <input-file> [--format md|html|both] ' +
+                '[--out-dir <dir>] [--ingest] [--force]');
+  process.exit(EXIT_FAILURE);
 }
-convert(args).catch(err => { console.error(err.message); process.exit(1); });
+convert(args).catch(err => {
+  console.error(err.message);
+  process.exit(err.exitCode || EXIT_FAILURE);
+});

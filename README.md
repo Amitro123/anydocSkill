@@ -29,6 +29,7 @@ node src/convert.js report.docx --format html --out-dir ./out
 
 `--format` is `md`, `html`, or `both` (default). Output lands next to the input unless
 `--out-dir` is given. `--force` writes output that failed the scrambled-text check.
+`--ingest` adds knowledge-base metadata — see below.
 
 As a skill, `/anydoc <file>` — it asks which format you want unless your request
 already names one.
@@ -48,6 +49,91 @@ already names one.
 
 Arabic uses the same code paths and is detected by the same Unicode ranges, but is
 untested and the scrambled-text check does not cover it.
+
+## Hebrew and RTL documents
+
+Hebrew converts correctly, including from PDF. If you hit the scrambled-text error,
+this section is what it means.
+
+**Visual order vs. logical order.** A PDF stores positioned glyphs, not sentences. Some
+extractors return Hebrew in the order it was painted — right to left — which read back
+as a string leaves every word reversed: `רושיג` instead of `גישור`. It is unreadable and
+unsearchable, and nothing downstream can repair it, because the damage happens before
+any RTL handling runs.
+
+**This is why PDFs do not go through anydoc.** anydoc's PDF extractor returns visual
+order for Hebrew, so PDFs are read with pdf.js, which returns logical order. Every
+extraction is then checked regardless of which path produced it, by counting Hebrew
+final forms (ך ם ן ף ץ) — they only ever end a word in correct Hebrew, and only ever
+start one in reversed text.
+
+**If the check fires**, the conversion exits with code 2 and writes nothing. It is not a
+bug in the document or in this tool; the extractor handed back scrambled text. Do one of:
+
+- Convert the original `.docx` or `.pptx` instead. They carry real structure and extract
+  correctly — always prefer them over a PDF of the same document.
+- Re-run with `--force` if you want the output anyway, knowing the text is scrambled.
+
+**Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
+returns nothing and you get an empty document — the command warns when this happens. Add
+a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
+pass the same check.
+
+**`--force` is not the default on purpose.** Output that is silently wrong is worse than
+a conversion that refuses: scrambled Hebrew looks like text, survives review, and only
+surfaces once it is already in a knowledge base.
+
+## Knowledge-base ingest
+
+`--ingest` adds provenance metadata and a source notice, for pipelines that store
+extracted documents in a wiki or index:
+
+```yaml
+---
+title: "contract"
+source: contract.pdf
+source_type: pdf
+source_location: ./docs/contract.pdf
+extracted_at: 2026-09-16
+content_mode: verbatim
+dir: rtl
+lang: he
+---
+
+> **Source:** contract.pdf, extracted by anydoceSkill on 2026-09-16.
+```
+
+`content_mode` is always `verbatim` — this tool extracts and never summarises. The field
+is written so an index holding both extracts and generated summaries can tell them apart
+without inspecting the text.
+
+## Calling it from another language
+
+Exit codes are part of the interface, so a caller does not have to parse stderr:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Failure — missing file, unsupported format, bad arguments |
+| 2 | Extraction returned scrambled text and was refused |
+
+From Python:
+
+```python
+import subprocess
+
+result = subprocess.run(
+    ["node", "src/convert.js", path, "--format", "md"],
+    capture_output=True, text=True,
+)
+
+if result.returncode == 2:
+    raise RuntimeError(f"Hebrew came back scrambled: {result.stderr}")
+if result.returncode != 0:
+    raise RuntimeError(result.stderr)
+```
+
+Check `returncode`. A caller that only reads stdout sees an empty result and no error.
 
 ## Things not to undo
 

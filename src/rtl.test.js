@@ -29,7 +29,7 @@ const { dir: enDir } = detectDocumentLanguage(englishText);
 assert(enDir === 'ltr', 'English doc should be LTR');
 
 // addRtlSupport output contains expected markers
-const output = addRtlSupport(hebrewText, 'Test Doc');
+const output = addRtlSupport(hebrewText, { title: 'Test Doc' });
 assert(output.includes('dir: rtl'), 'front-matter should include dir: rtl');
 assert(output.includes('lang: he'), 'front-matter should include lang: he');
 assert(output.includes('<div dir="rtl"'), 'body should be wrapped in RTL div');
@@ -50,11 +50,11 @@ assert(html.includes('<h1'), 'markdown headings should render as HTML');
 assert(!html.includes('<div dir="rtl"'), 'redundant rtl div should be unwrapped');
 
 // renderHtml — LTR documents stay LTR
-const ltrHtml = renderHtml(addRtlSupport(englishText, 'English Doc'));
+const ltrHtml = renderHtml(addRtlSupport(englishText, { title: 'English Doc' }));
 assert(ltrHtml.includes('<html dir="ltr" lang="en">'), 'English doc should render LTR');
 
 // renderHtml — tables get a scroll container
-const tableHtml = renderHtml(addRtlSupport('| א | ב |\n|---|---|\n| 1 | 2 |', 'T'));
+const tableHtml = renderHtml(addRtlSupport('| א | ב |\n|---|---|\n| 1 | 2 |', { title: 'T' }));
 assert(tableHtml.includes('<div class="table-scroll"><table>'), 'tables should be wrapped');
 
 // detectVisualOrder — catches extractors that emit RTL text word-reversed
@@ -129,9 +129,41 @@ assert(reorderLtrRuns(mixed).map(i => i.str).join(' ') === 'תיק 15 ימים',
   'Hebrew around a lone number keeps its order');
 
 // front-matter records provenance, which is what detects a cross-format overwrite
-const sourced = addRtlSupport(hebrewText, 'Doc', 'report.xlsx');
+const sourced = addRtlSupport(hebrewText, { title: 'Doc', source: 'report.xlsx' });
 assert(/^source: report\.xlsx$/m.test(sourced), 'front-matter should record the source file');
-assert(!/source:/.test(addRtlSupport(hebrewText, 'Doc')), 'source is omitted when not given');
+assert(!/source:/.test(addRtlSupport(hebrewText, { title: 'Doc' })), 'source omitted when not given');
+
+// --ingest metadata (issue #1)
+const plain = addRtlSupport(hebrewText, { title: 'Doc', source: 'a.pdf' });
+assert(!/source_type|extracted_at|content_mode/.test(plain), 'ingest fields are opt-in');
+assert(!/\*\*Source:\*\*/.test(plain), 'the source notice is opt-in');
+
+const ingested = addRtlSupport(hebrewText, {
+  title: 'Doc', source: 'contract.pdf',
+  ingest: { type: 'pdf', location: './docs/contract.pdf', extractedAt: '2026-09-16' },
+});
+assert(/^source_type: pdf$/m.test(ingested), 'ingest records the source type');
+assert(/^source_location: \.\/docs\/contract\.pdf$/m.test(ingested), 'ingest records the path');
+assert(/^extracted_at: 2026-09-16$/m.test(ingested), 'ingest records the date');
+assert(/^content_mode: verbatim$/m.test(ingested), 'this tool only ever extracts verbatim');
+assert(ingested.includes('> **Source:** contract.pdf, extracted by anydoceSkill on 2026-09-16.'),
+  'ingest adds the source notice');
+assert(ingested.indexOf('> **Source:**') < ingested.indexOf('<div dir="rtl"'),
+  'the notice is provenance, so it sits outside the RTL wrapper');
+
+// Slide notes carry their slide number (issue #4)
+const notesMd = [
+  '---', 'dir: rtl', 'lang: he', '---', '',
+  '<div dir="rtl" lang="he">', '',
+  '## שקופית 4', '',
+  '<!-- Slide 4 notes -->', '> **הערות דובר:** להזכיר את התקציב', '',
+  '</div>',
+].join('\n');
+const notesHtml = renderHtml(notesMd);
+assert(/<aside data-slide="4" dir="rtl">/.test(notesHtml), 'notes become an addressable aside');
+assert(!/<!-- Slide 4 notes -->/.test(notesHtml), 'the marker is consumed, not left in the output');
+assert(notesHtml.includes('להזכיר את התקציב'), 'notes content survives the rewrite');
+assert(!/<blockquote>[\s\S]*הערות דובר/.test(notesHtml), 'the blockquote is replaced, not duplicated');
 
 // pptx labels follow the deck, so an English deck is not labelled in Hebrew
 const { _internals: pptxInternals } = require('./pptx-extract');

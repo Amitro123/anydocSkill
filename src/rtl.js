@@ -65,30 +65,52 @@ function detectVisualOrder(text) {
 
 /**
  * Add RTL front-matter and wrap RTL paragraphs.
- * @param {string} markdown - Raw Markdown from anydoc
- * @param {string} [title] - Optional document title
- * @param {string} [source] - Original filename, recorded for provenance
+ *
+ * @param {string} markdown - Extracted Markdown
+ * @param {object} [opts]
+ * @param {string} [opts.title] - Document title
+ * @param {string} [opts.source] - Original filename, recorded for provenance
+ * @param {object} [opts.ingest] - Knowledge-base metadata; see ingestFields
  * @returns {string} RTL-enhanced Markdown
  */
-function addRtlSupport(markdown, title = '', source = '') {
+function addRtlSupport(markdown, opts = {}) {
+  const { title = '', source = '', ingest = null } = opts;
   const { dir, lang } = detectDocumentLanguage(markdown);
 
   const frontMatter = [
     '---',
     title ? `title: "${title}"` : null,
     source ? `source: ${source}` : null,
+    ...ingestFields(ingest),
     `dir: ${dir}`,
     lang ? `lang: ${lang}` : null,
     '---',
   ].filter(Boolean).join('\n');
 
-  if (dir === 'ltr') {
-    return `${frontMatter}\n\n${markdown}`;
-  }
+  // The notice sits outside the RTL wrapper: it is provenance about the document
+  // rather than part of it, and it is written in English.
+  const notice = ingest
+    ? `\n> **Source:** ${source || ingest.location}, extracted by anydoceSkill on ${ingest.extractedAt}.\n`
+    : '';
 
-  // Wrap the whole body in a single RTL div (simpler and more reliable than per-paragraph)
-  const body = `<div dir="rtl" lang="${lang || 'he'}">\n\n${markdown.trim()}\n\n</div>`;
-  return `${frontMatter}\n\n${body}`;
+  const body = dir === 'ltr'
+    ? markdown
+    : `<div dir="rtl" lang="${lang || 'he'}">\n\n${markdown.trim()}\n\n</div>`;
+
+  return `${frontMatter}\n${notice}\n${body}`;
+}
+
+// Only ever "verbatim": this tool extracts, it never summarises. The field is still
+// written so a knowledge base mixing extracts with generated summaries can tell them
+// apart without inspecting the text.
+function ingestFields(ingest) {
+  if (!ingest) return [];
+  return [
+    `source_type: ${ingest.type}`,
+    `source_location: ${ingest.location}`,
+    `extracted_at: ${ingest.extractedAt}`,
+    'content_mode: verbatim',
+  ];
 }
 
 module.exports = { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder };

@@ -94,7 +94,12 @@ async function pptxToMarkdown(filePath, opts = {}) {
       const notesPart = byName(`ppt/notesSlides/notesSlide${n}.xml`);
       if (notesPart) {
         const notes = xmlToParagraphs(zip.readAsText(notesPart));
-        if (notes.length) section.push(`> **${labels.notes}:** ${notes.join(' ')}`);
+        // The marker carries the slide number in a machine-readable form: the
+        // heading above already gives a reader the position, but notes lifted out
+        // of the document on their own would lose it.
+        if (notes.length) {
+          section.push(`<!-- Slide ${n} notes -->\n> **${labels.notes}:** ${notes.join(' ')}`);
+        }
       }
     }
 
