@@ -83,7 +83,7 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(md.includes(`source_location: ${deck}`), 'source location is the path as given');
   assert(md.includes(`extracted_at: ${today}`), 'extraction date is recorded');
   assert(/^content_mode: verbatim$/m.test(md), 'content mode is recorded');
-  assert(md.includes('> **Source:** deck.pptx, extracted by anydoceSkill on '),
+  assert(md.includes('> **Source:** deck.pptx, extracted by anydocSkill on '),
     'the source notice is prepended');
 }
 
