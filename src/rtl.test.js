@@ -146,7 +146,7 @@ assert(/^source_type: pdf$/m.test(ingested), 'ingest records the source type');
 assert(/^source_location: \.\/docs\/contract\.pdf$/m.test(ingested), 'ingest records the path');
 assert(/^extracted_at: 2026-09-16$/m.test(ingested), 'ingest records the date');
 assert(/^content_mode: verbatim$/m.test(ingested), 'this tool only ever extracts verbatim');
-assert(ingested.includes('> **Source:** contract.pdf, extracted by anydoceSkill on 2026-09-16.'),
+assert(ingested.includes('> **Source:** contract.pdf, extracted by anydocSkill on 2026-09-16.'),
   'ingest adds the source notice');
 assert(ingested.indexOf('> **Source:**') < ingested.indexOf('<div dir="rtl"'),
   'the notice is provenance, so it sits outside the RTL wrapper');
