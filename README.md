@@ -176,6 +176,16 @@ new commits. Pushing a fix without bumping it leaves every existing install on t
 code — `claude plugin update` will report it is already current. Bump the version in the
 same commit as the change.
 
+**A running session keeps the version it started with.** `claude plugin update` writes
+the new version to disk and says so, but the session that is open resolves
+`${CLAUDE_PLUGIN_ROOT}` to the path it loaded at startup — observed still serving 0.2.0
+while `installed_plugins.json` recorded 0.4.0. Uninstalling and reinstalling mid-session
+does not move it either. A fix reaches you on the next session, not this one.
+
+This matters when developing the skill: converting through it runs the last published
+version, not the working tree. Test a change with `node src/convert.js` from the repo,
+and go back through the skill once the change is released.
+
 ## Tests
 
 ```bash
