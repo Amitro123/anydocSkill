@@ -1,6 +1,6 @@
 {
   "name": "anydoc-skill",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Claude Code skill: convert documents to Markdown and HTML with correct Hebrew RTL layout",
   "main": "src/rtl.js",
   "scripts": {

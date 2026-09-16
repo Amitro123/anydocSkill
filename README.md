@@ -3,6 +3,25 @@
 Claude Code skill that converts documents to Markdown and to a standalone HTML page,
 with correct right-to-left layout for Hebrew.
 
+Getting the words out of a document is the easy half. The half that goes wrong quietly
+is everything around them — a footer that vanishes, a table flattened into a sentence, a
+legal clause renumbered by one. Each section below exists because a real document was
+converted wrongly and nobody noticed until they read it:
+
+| | |
+|---|---|
+| [Hebrew and RTL](#hebrew-and-rtl-documents) | Logical vs. visual order, and why the `.md` carries an invisible mark on every line |
+| [Headings](#headings-a-document-never-declared) | Recovering section titles a hand-formatted document never declared |
+| [Numbering](#numbering) | Keeping clause numbers a renderer would otherwise count for itself |
+| [Tables](#tables) | Recovering columns, and refusing to guess when they are ambiguous |
+| [Page furniture](#page-furniture) | Dropping a repeated header without deleting a repeated template |
+| [`--verify`](#checking-a-conversion) | Reading the page back against the output, mechanically |
+| [Regression corpus](#regression-corpus) | Real documents, kept outside this repo, pinned to snapshots |
+
+The one rule underneath all of it: **losing text silently is worse than converting
+badly.** Where the shape of a document cannot be recovered with confidence, the text
+comes through flat and intact rather than arranged into a guess.
+
 ## Install as a Claude Code plugin
 
 ```bash
@@ -31,9 +50,14 @@ node src/convert.js report.docx --format html --out-dir ./out
 ```
 
 `--format` is `md`, `html`, or `both` (default). Output lands next to the input unless
-`--out-dir` is given. `--force` writes output that failed the scrambled-text check, and
-`--verify` checks the conversion against the page it came from — see below.
-`--ingest` adds knowledge-base metadata — see below.
+`--out-dir` is given.
+
+| Flag | |
+|---|---|
+| `--verify` | Check the conversion against the page it came from — [see below](#checking-a-conversion) |
+| `--pages` | Convert part of a PDF |
+| `--ingest` | Add knowledge-base metadata — [see below](#knowledge-base-ingest) |
+| `--force` | Write output that failed the scrambled-text check |
 
 `--pages` selects part of a PDF: `--pages 1`, `--pages 2-4`, `--pages 1,5-7`. Pages are
 numbered from 1, and it applies to PDFs only — other formats have no page numbers, so
@@ -91,15 +115,6 @@ after any `#`, `-` or `1.` so the Markdown still parses. It is invisible and mak
 line resolve RTL with no HTML at all. The `.html` output does not need it — direction
 lives on the `<html>` element there.
 
-**Headers and footers survive a partial extract.** Page furniture is dropped only when it
-repeats on every page converted. Convert one page and the strip is kept, because a line
-that appears once is content — often the only place a company name or a contact detail
-appears. This holds for tagged and untagged PDFs alike.
-
-Repetition also stops counting as furniture once it covers more than half the document.
-Pages that are copies of one template — two tickets from the same order, the same form
-filled twice — repeat nearly everything, and almost none of it is a header.
-
 **Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
 returns nothing and you get an empty document — the command warns when this happens. Add
 a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
@@ -108,6 +123,25 @@ pass the same check.
 **`--force` is not the default on purpose.** Output that is silently wrong is worse than
 a conversion that refuses: scrambled Hebrew looks like text, survives review, and only
 surfaces once it is already in a knowledge base.
+
+## Page furniture
+
+A running header or footer belongs to the page, not the document, so repeating it under
+every page break is noise. Identifying it is guesswork, though, and both ways of getting
+it wrong lose real content.
+
+It is dropped only when it repeats on **every page converted**. Convert one page and the
+strip is kept, because a line that appears once is content — often the only place a
+company name or a contact detail appears on that page.
+
+Repetition also stops counting once it covers more than half the document. Pages that are
+copies of one template — two tickets from the same order, the same form filled twice —
+repeat nearly everything, and almost none of it is a header. Without that guard a
+two-page ticket order came out as four lines.
+
+Both extraction paths share the test, so a PDF converts the same whether or not it
+carries a structure tree. `--verify` lists what was dropped this way, apart from the
+losses, so you can see it was furniture.
 
 ## Headings a document never declared
 
@@ -266,7 +300,8 @@ Check `returncode`. A caller that only reads stdout sees an empty result and no 
 
 ## Things not to undo
 
-Four decisions look like they could be simplified. They cannot:
+These decisions look like they could be simplified. They cannot — most were paid for by
+a document that came out wrong, and several were nearly reverted by the next fix:
 
 - **`dir` goes on `<html>`, not `direction: rtl` in CSS.** `dir` is inherited and gives
   the Unicode bidi algorithm a base direction. CSS alone sets visual direction without
@@ -288,8 +323,30 @@ Four decisions look like they could be simplified. They cannot:
   Trusting array order reverses every word of a line from the second kind.
 - **Left-to-right runs inside RTL text are then reordered by ascending x.** A hyphenated
   case number split across items arrives backwards otherwise.
+- **A leading `#` is escaped; a leading dash is not.** Page text never means `#` as
+  Markdown, so an invoice column headed `#` would open a heading holding the whole
+  flattened row. A dash is the opposite: a dash-prefixed line usually is the list it
+  looks like, and escaping those turned a 21-item syllabus into paragraphs. Only a dash
+  that also *closes* the line is escaped — decoration, since no list item ends with its
+  own marker.
+- **Repetition means furniture only while it stays a small part of the document.** A
+  header repeats on every page and so does every line of a template — two tickets from
+  one order, the same form filled twice. Dropping whatever repeats deleted both tickets.
+  Above half the document, what repeats is the document.
+- **Untagged page text is kept unless it repeats on every page converted.** The structure
+  tree does not reach headers and footers, and discarding them outright lost the only
+  place a company name appeared on a one-page extract. Both extraction paths share the
+  same test, so a PDF converts the same whether or not it is tagged.
+- **A table is only emitted when its columns are unambiguous.** Every row has to divide
+  into the same number of cells, and the columns have to stand further apart than their
+  own cells are ragged. Filing a number under the wrong heading is worse than the flat
+  text it replaces.
+- **Bold becomes a heading only with the rest of the shape.** Short, not a sentence, and
+  with body text underneath it. A letter emphasises whole paragraphs and signs off in
+  bold, and promoting those invents an outline the document does not have.
 
-Every extraction is checked for visual-order scrambling before anything is written.
+Every extraction is checked for visual-order scrambling before anything is written, and
+`--verify` re-reads the page against the finished output.
 
 ## Releasing a change
 
@@ -314,11 +371,25 @@ and go back through the skill once the change is released.
 npm test                    # both suites
 npm run test:unit
 npm run test:integration
+ANYDOC_CORPUS=~/anydoc-corpus npm run corpus
 ```
 
 The unit suite covers pure helpers; the integration suite generates a document in each
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
+
+Three of those fixtures are page shapes that broke a real conversion, rebuilt as the
+smallest page that still poses the problem: a table whose first column is headed `#`,
+two pages that are copies of one template, and a letter numbering its sections and its
+clauses separately.
+
+The [corpus](#regression-corpus) is the suite that catches the next one. Generated
+fixtures pin what someone thought to write down; real documents are what actually find
+defects, and fixing one silently broke another twice.
+
+> When writing a fixture, keep its text inside the page. Anything past the right edge of
+> the MediaBox is clipped before it reaches the extractor, so lines come back truncated
+> and the fixture looks like a converter bug.
 
 Two of those assertions are invariants rather than examples, because every ordering
 defect found so far was the same mistake in a different place — code treating the order

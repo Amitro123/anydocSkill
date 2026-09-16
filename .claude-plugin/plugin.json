@@ -1,7 +1,7 @@
 {
   "name": "anydoc",
   "displayName": "anydoc \u2014 document conversion with RTL",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Convert PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown and to a standalone HTML page, with correct right-to-left layout for Hebrew.",
   "author": {
     "name": "Amit Rosen"
