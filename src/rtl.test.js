@@ -1,5 +1,5 @@
 const assert = require('node:assert');
-const { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder } = require('./rtl');
+const { addRtlSupport, rtlRatio, detectDocumentLanguage, detectVisualOrder, markRtlLines } = require('./rtl');
 const { renderHtml, parseFrontMatter } = require('./render-html');
 
 const hebrewText = `
@@ -34,6 +34,35 @@ assert(output.includes('dir: rtl'), 'front-matter should include dir: rtl');
 assert(output.includes('lang: he'), 'front-matter should include lang: he');
 assert(output.includes('<div dir="rtl"'), 'body should be wrapped in RTL div');
 assert(output.includes('title: "Test Doc"'), 'front-matter should include title');
+
+// markRtlLines — the mark must set direction without breaking Markdown structure
+const RLM = '‏';
+const markedLines = markRtlLines([
+  '# כותרת',
+  '- פריט 2024',
+  '1. סעיף',
+  '> ציטוט',
+  '| א | ב |',
+  '<div dir="rtl">',
+  'plain english',
+  '```',
+  'const x = "עברית";',
+  '```',
+].join('\n')).split('\n');
+
+assert(markedLines[0] === `# ${RLM}כותרת`, 'a heading keeps its # at line start');
+assert(markedLines[1] === `- ${RLM}פריט 2024`, 'a bullet keeps its marker at line start');
+assert(markedLines[2] === `1. ${RLM}סעיף`, 'an ordered item keeps its number at line start');
+assert(markedLines[3] === `> ${RLM}ציטוט`, 'a blockquote keeps its marker at line start');
+assert(markedLines[4] === '| א | ב |', 'a table row is left alone — a mark before | breaks it');
+assert(markedLines[5] === '<div dir="rtl">', 'raw HTML is left alone');
+assert(markedLines[6] === 'plain english', 'a line with no RTL letter is left alone');
+assert(markedLines[8] === 'const x = "עברית";', 'fenced code is left alone');
+assert(markRtlLines('שלום')  === `${RLM}שלום`, 'a bare paragraph is marked at its start');
+
+assert(output.split('\n').some(l => l.startsWith(`# ${RLM}`)),
+  'addRtlSupport should mark the body so direction survives without the HTML wrapper');
+assert(!addRtlSupport(englishText, { title: 'E' }).includes(RLM), 'LTR output carries no marks');
 
 // parseFrontMatter
 const parsed = parseFrontMatter(output);
@@ -107,6 +136,22 @@ assert(runShape(['א', 'ב']) === 'ul:2', 'non-numeric labels stay bullets');
 assert(pdfInternals.numericLabel('1.') === 1, 'a trailing period is part of the label');
 assert(pdfInternals.numericLabel('2 )') === 2, 'spacing inside a label is tolerated');
 assert(pdfInternals.numericLabel('א') === null, 'a Hebrew letter is not a number');
+
+// PDF structure tree — untagged page furniture is content until it proves repetitive
+const page = (blocks, above, below) => ({ blocks, above, below });
+const footer = 'עתיד האוטומציה: הדרכות | ייעוץ';
+
+assert(pdfInternals.assemble([page(['גוף'], ['כותרת'], [footer])])
+  === `כותרת\n\nגוף\n\n${footer}`,
+  'on a one-page extract the strip appears once, so it is content and must be kept');
+
+assert(pdfInternals.assemble([page(['א'], [], [footer]), page(['ב'], [], [footer])])
+  === 'א\n\nב',
+  'a strip on every page is furniture and must be dropped');
+
+assert(pdfInternals.assemble([page(['א'], [], ['- 1 -']), page(['ב'], [], ['- 2 -'])])
+  === 'א\n\n- 1 -\n\nב\n\n- 2 -',
+  'page numbers differ per page, so they survive the filter');
 
 // PDF geometry — an embedded LTR run must survive an RTL line
 const { reorderLtrRuns } = require('./pdf-extract');

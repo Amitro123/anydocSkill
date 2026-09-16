@@ -81,6 +81,20 @@ bug in the document or in this tool; the extractor handed back scrambled text. D
   correctly — always prefer them over a PDF of the same document.
 - Re-run with `--force` if you want the output anyway, knowing the text is scrambled.
 
+**Markdown carries no direction of its own.** The `.md` gets `dir: rtl` front-matter and
+a `<div dir="rtl">` wrapper, but those only reach a renderer that keeps raw HTML and does
+not sanitise the attribute away. Everywhere else — a plain editor, most previews — the
+base direction would fall back to LTR, which left-aligns the text and strands digits and
+Latin runs on the wrong side of the line. So each line also gets a U+200F mark, placed
+after any `#`, `-` or `1.` so the Markdown still parses. It is invisible and makes the
+line resolve RTL with no HTML at all. The `.html` output does not need it — direction
+lives on the `<html>` element there.
+
+**Headers and footers survive a partial extract.** Page furniture is dropped only when it
+repeats on every page converted. Convert one page and the strip is kept, because a line
+that appears once is content — often the only place a company name or a contact detail
+appears. This holds for tagged and untagged PDFs alike.
+
 **Scanned PDFs are a different problem.** A scan has no text layer at all, so extraction
 returns nothing and you get an empty document — the command warns when this happens. Add
 a text layer first (`ocrmypdf` is the usual tool) and convert the result; it still has to
