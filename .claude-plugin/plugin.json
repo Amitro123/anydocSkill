@@ -15,7 +15,8 @@
     "documents",
     "markdown",
     "extraction",
-    "ocr-alternative"
+    "ocr-alternative",
+    "ocr"
   ],
   "skills": "./.claude/skills/"
 }

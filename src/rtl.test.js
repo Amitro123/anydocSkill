@@ -451,6 +451,134 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
     `but the report names it with its size — got:\n${said}`);
 }
 
+// The OCR companion's own argument parsing and its ocrmypdf invocation, both kept in
+// src/ocr-args.js purely so this can check them without ocrmypdf installed.
+{
+  const { parseArgs, pageListArg, buildOcrArgs } = require('./ocr-args');
+
+  const args = parseArgs(['doc.pdf', '--lang', 'heb+eng', '--out-dir', 'out']);
+  assert.strictEqual(args.input, 'doc.pdf');
+  assert.strictEqual(args.lang, 'heb+eng');
+  assert.strictEqual(args.outDir, 'out');
+  assert.strictEqual(args.format, 'both', 'the default format matches convert.js\'s own');
+
+  assert.throws(() => parseArgs(['doc.pdf', '--nope']), /Unknown option/,
+    'an unrecognised flag is refused rather than silently ignored');
+  assert.throws(() => parseArgs(['doc.pdf', '--lang']), /needs a value/);
+  assert.throws(() => parseArgs(['a.pdf', 'b.pdf']), /Only one input file/);
+  assert.throws(() => parseArgs(['doc.pdf', '--format', 'pdf']), /Unknown --format/);
+
+  assert.strictEqual(pageListArg([3, 7, 9]), '3,7,9');
+
+  const argv = buildOcrArgs('in.pdf', 'out.pdf', [3, 7], 'heb+eng');
+  assert(argv.includes('--skip-text'), 'a page that turns out to have text is still left alone');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--pages') + 1, argv.indexOf('--pages') + 2), ['3,7'],
+    'restricted to exactly the pages named, not the whole document');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('-l') + 1, argv.indexOf('-l') + 2), ['heb+eng']);
+  assert(argv[argv.length - 2] === 'in.pdf' && argv[argv.length - 1] === 'out.pdf',
+    'input and output are positional and last, as ocrmypdf expects');
+}
+
+// reconcile() decides what an OCR pass over anydoc's own output was and was not
+// allowed to change. It runs nothing itself, so the whole of its behaviour is here.
+{
+  const { reconcile, reconcileReport } = require('./reconcile');
+
+  const page = (number, digest, picture = false) => ({ page: number, digest, picture });
+  const report = (pages, pictureOnly = []) => ({
+    totals: { pages: pages.length },
+    pictureOnly,
+    pages,
+  });
+
+  // The ordinary case: OCR filled in the pages it was asked to and left the rest alone.
+  {
+    const before = report(
+      [page(1, 'aaa'), page(2, 'bbb', true), page(3, 'ccc')],
+      [2]);
+    const after = report(
+      [page(1, 'aaa'), page(2, 'new-text', false), page(3, 'ccc')],
+      []);
+
+    const result = reconcile(before, after);
+    assert(result.ok, 'a clean OCR pass reconciles');
+    assert.deepStrictEqual(result.recovered, [2], 'the OCR page is recorded as recovered');
+    assert.deepStrictEqual(result.stillUnreadable, [], 'nothing is left unreadable');
+    assert.deepStrictEqual(result.unexpectedChanges, [], 'nothing unexpected happened');
+    assert.deepStrictEqual(result.provenance, { 1: 'original', 2: 'ocr', 3: 'original' },
+      'each page is attributed to where its text came from');
+  }
+
+  // OCR found nothing either. Not a failure of the check — the page is exactly as
+  // unreadable as it was, which is a fact worth keeping rather than an error.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+
+    const result = reconcile(before, after);
+    assert(result.ok, 'OCR finding nothing still reconciles cleanly');
+    assert.deepStrictEqual(result.stillUnreadable, [2]);
+    assert.deepStrictEqual(result.recovered, []);
+  }
+
+  // The one thing this exists to catch: a page that already had a text layer came back
+  // with a different one. --skip-text and --pages are supposed to make this impossible;
+  // this is what actually checks that they did.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+    const after = report([page(1, 'DIFFERENT'), page(2, 'bbb', true)], [2]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'a page that had text and changed anyway must fail reconciliation');
+    assert.strictEqual(result.unexpectedChanges.length, 1);
+    assert.strictEqual(result.unexpectedChanges[0].page, 1);
+    assert(/already had a text layer/.test(result.unexpectedChanges[0].reason));
+  }
+
+  // A page count mismatch is refused even with every digest agreeing — the comparison
+  // above only checks pages present on both sides, and a missing page would otherwise
+  // pass by being absent from both loops.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb'), page(3, 'ccc')]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb')]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'a document that lost a page must not reconcile');
+    assert(!result.pageCount.match);
+    assert.strictEqual(result.pageCount.before, 3);
+    assert.strictEqual(result.pageCount.after, 2);
+  }
+
+  // A page appearing that was not in the original document — OCR does not add pages,
+  // but a silent mismatch here would be harder to trace than a named one.
+  {
+    const before = report([page(1, 'aaa')]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb')]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'an extra page must not reconcile');
+    assert(result.unexpectedChanges.some(c => c.page === 2 && /not in the original/.test(c.reason)));
+  }
+
+  // The report is prose, and has to say the two things that matter: what changed and
+  // whether the result is usable.
+  {
+    const clean = reconcile(
+      report([page(1, 'aaa'), page(2, 'bbb', true)], [2]),
+      report([page(1, 'aaa'), page(2, 'new', false)], []));
+    const said = reconcileReport(clean);
+    assert(/OCR added a text layer to 1 page\(s\): 2/.test(said), `got: ${said}`);
+    assert(/guess, not a reading/.test(said));
+
+    const refused = reconcile(
+      report([page(1, 'aaa')]),
+      report([page(1, 'DIFFERENT')]));
+    const saidRefused = reconcileReport(refused);
+    assert(/REFUSED/.test(saidRefused) && /not being used/.test(saidRefused),
+      `a refused result must say so plainly — got: ${saidRefused}`);
+  }
+}
+
 // --pages accepts single pages, ranges and lists, and rejects nonsense
 const { _internals: cli, MAX_PAGE } = require('./convert-args');
 const selected = spec => {

@@ -204,10 +204,60 @@ and a screenshot of a table look identical from here. It names the page; you dec
 
 1. An original `.docx` or `.pptx` if one exists — most reliable of all.
 2. Otherwise this, with `--verify`.
-3. No text layer? `ocrmypdf -l heb+eng`, then this on the result.
+3. No text layer? Use the `anydoc-ocr` skill below, or `ocrmypdf -l heb+eng` by hand,
+   then this on the result.
 
-At step 3, know what the check still means: it verifies the conversion against what OCR
-produced, not against the page. Faithful rendering of an uncertain reading. Read it.
+### anydoc-ocr: OCR for the pages this cannot read, kept separate on purpose
+
+A second skill, `.claude/skills/anydoc-ocr/`, exists for exactly step 3. It is a
+different tool, not a flag on this one, and that separation is the point: this
+converter's whole guarantee is that `--verify` compares output against the page's own
+text. The moment that text is a guess from an image, the comparison is against a guess,
+and blurring that into one tool would blur the guarantee along with it.
+
+```bash
+node src/ocr.js report.pdf --out-dir out --lang heb+eng
+```
+
+It runs this converter first to see which pages, if any, are `PICTURE ONLY`; if none
+are, it says so and stops. Otherwise it runs `ocrmypdf` restricted to exactly those
+pages — never the ones with `IMAGE AMONG TEXT`, which already have good text next to
+the image and are not this tool's to touch — then runs this converter again on the
+result and compares the two `--report`s page by page using their digests.
+
+**A page that already had text must come back with the exact same text, or nothing is
+written at all.** That is not a warning, it is the entire mechanism: `src/reconcile.js`
+checks every page outside the ones OCR was asked to touch, and a single changed digest
+refuses the whole run rather than silently keeping the parts that worked. OCR
+recompressing an image, or disagreeing with this tool about which pages need it, are
+exactly the kind of thing that check exists to catch — not hypothetically; building it
+surfaced a `[null, null]` form-matrix crash and a repetition heuristic that mistook a
+different chart on every page for one image repeating (see `#31` in the issue tracker),
+and reconciliation is what would have caught either one turning into silent data loss.
+
+What it writes: `<title>.md`/`.html` from the OCR'd file, and `<title>.ocr-report.json`
+naming exactly which pages' text is a guess:
+
+```json
+{
+  "schema": 1,
+  "tool": "anydoc-ocr",
+  "source": "report.pdf",
+  "lang": "heb+eng",
+  "recovered": [4, 7],
+  "stillUnreadable": [],
+  "provenance": { "1": "original", "4": "ocr", "7": "ocr" }
+}
+```
+
+Read `recovered` before trusting anything on those pages — that text was never checked
+against the document, because there is nothing left of the document to check it
+against. `stillUnreadable` means OCR found nothing either; that content genuinely is not
+recoverable this way, and no flag changes that — there is no `--force` here, because
+there is no safe way to override a failed reconciliation.
+
+Neither `ocrmypdf` nor Tesseract's Hebrew language data ship with this project. Missing
+either exits 5 and names the exact install command for the platform it's running on.
 
 ## Hebrew and RTL documents
 
@@ -620,15 +670,23 @@ and go back through the skill once the change is released.
 ## Tests
 
 ```bash
-npm test                    # both suites
+npm test                    # everything below
 npm run test:unit
 npm run test:integration
+npm run test:ocr
 ANYDOC_CORPUS=~/anydoc-corpus npm run corpus
 ```
 
 The unit suite covers pure helpers; the integration suite generates a document in each
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
+
+`test:ocr` covers `anydoc-ocr` without needing `ocrmypdf` installed, which it is not
+here or in CI: `test/fake-bin/` stands in for `ocrmypdf` and Tesseract, so what runs is
+real `src/ocr.js` and `src/reconcile.js` code against output the test fully controls —
+including the refusal path, by having the stub change a page it should not have. The
+one thing that cannot be faked, the tool actually being missing, is not faked either;
+that assertion is a real failure on a runner with no OCR installed, this one included.
 
 Three of those fixtures are page shapes that broke a real conversion, rebuilt as the
 smallest page that still poses the problem: a table whose first column is headed `#`,

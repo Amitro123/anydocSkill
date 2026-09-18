@@ -3,13 +3,16 @@
   "version": "0.7.0",
   "description": "Claude Code skill: convert documents to Markdown and HTML with correct Hebrew RTL layout",
   "bin": {
-    "anydoc": "src/convert.js"
+    "anydoc": "src/convert.js",
+    "anydoc-ocr": "src/ocr.js"
   },
   "scripts": {
-    "test": "npm run test:versions && npm run test:unit && npm run test:integration && npm run corpus",
+    "test": "npm run test:versions && npm run test:unit && npm run test:integration && npm run test:ocr && npm run corpus",
     "test:unit": "node src/rtl.test.js",
     "test:integration": "node test/integration.test.js",
+    "test:ocr": "node test/ocr.test.js",
     "convert": "node src/convert.js",
+    "ocr": "node src/ocr.js",
     "corpus": "node test/corpus.test.js",
     "test:versions": "node test/versions.test.js"
   },

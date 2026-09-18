@@ -488,6 +488,63 @@ function writeIllustratedPdf(dir, count = 3) {
   return file;
 }
 
+/**
+ * A PDF whose pages are a plain list of texts, with `null` for a page that carries an
+ * image and no text at all.
+ *
+ * Built for the OCR companion's own tests: they need a document with both an ordinary
+ * text page and a PICTURE ONLY one in the same file, and need to know each page's exact
+ * text so a fake ocrmypdf can reproduce it byte-for-byte on the pages it was not asked
+ * to touch — which is the only way to test that src/reconcile.js actually catches a
+ * page it should not have changed, without a real OCR engine to run against.
+ *
+ * @param {(string|null)[]} pageTexts
+ */
+function writeMixedPdf(dir, pageTexts, name = 'mixed.pdf') {
+  const count = pageTexts.length;
+  const streams = pageTexts.map(text => text === null
+    // A tiny real image, large enough on the page to be named by illustrations() but
+    // carrying no text of its own — the shape a scanned page actually has.
+    ? `q 400 0 0 300 72 320 cm /Img Do Q\n`
+    : `BT /F1 12 Tf 72 700 Td (${text}) Tj ET\n`);
+
+  const pixels = 64;
+  const image = `<</Type/XObject/Subtype/Image/Width ${pixels}/Height ${pixels}` +
+    `/ColorSpace/DeviceGray/BitsPerComponent 8/Filter/ASCIIHexDecode` +
+    `/Length ${pixels * pixels * 2 + 1}>>\nstream\n${'aa'.repeat(pixels * pixels)}>\nendstream`;
+
+  const pageId = n => 5 + (n - 1) * 2;
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    `<</Type/Pages/Kids[${Array.from({ length: count }, (_, i) => `${pageId(i + 1)} 0 R`).join(' ')}]/Count ${count}>>`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+    image,
+  ];
+  for (let n = 1; n <= count; n++) {
+    objects.push(
+      `<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>` +
+      `/XObject<</Img 4 0 R>>>>/Contents ${pageId(n) + 1} 0 R>>`,
+      `<</Length ${streams[n - 1].length}>>\nstream\n${streams[n - 1]}\nendstream`
+    );
+  }
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, pdf, 'latin1');
+  return file;
+}
+
 function writeCorpus(dir) {
   return [
     writeInvoicePdf(dir),
@@ -508,5 +565,5 @@ module.exports = {
   HEBREW, tempDir, EMISSION_ORDERS, writeTwoColumnPdf, writeCorpus,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
-  writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf,
+  writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf, writeMixedPdf,
 };
