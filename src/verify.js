@@ -83,15 +83,49 @@ function numberCounts(text) {
   return counts;
 }
 
+/**
+ * Count glyphs the page draws that carry no character of their own.
+ *
+ * Everything else here compares the extracted text against the rendered output, and
+ * both of those come from the same text layer — so a glyph that never became a
+ * character is missing from both sides and the comparison calls it clean. That is the
+ * one kind of loss happening *before* anything this tool does, and the only place it is
+ * visible is the operator list, which is what the page actually paints.
+ *
+ * Counted rather than guessed at from the text: a number printed `.10` because the bank
+ * omits the leading zero looks exactly like a truncated one, and reading the output for
+ * suspicious shapes would call that a defect. A glyph with no mapping is not a guess.
+ *
+ * Zero on every document in either corpus — some 55,000 glyphs of Hebrew banking,
+ * legal and office output — so this is quiet on healthy files. A font used purely for
+ * icons would have unmapped glyphs by design; if that ever surfaces, this is the count
+ * to loosen, and the report names it precisely rather than failing silently.
+ */
+function unmappedGlyphs(operatorList, OPS) {
+  let unmapped = 0;
+  for (let i = 0; i < operatorList.fnArray.length; i++) {
+    if (operatorList.fnArray[i] !== OPS.showText) continue;
+    for (const glyph of operatorList.argsArray[i][0] || []) {
+      // A bare number is a positioning adjustment between glyphs, not a glyph.
+      if (!glyph || typeof glyph === 'number') continue;
+      if (!glyph.unicode || glyph.unicode === '�') unmapped++;
+    }
+  }
+  return unmapped;
+}
+
 async function pdfLines(filePath, wanted) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { _internals: { joinOneLine } } = require('./pdf-extract');
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
 
   const pages = [];
+  let undecoded = 0;
   for (let n = 1; n <= doc.numPages; n++) {
     if (wanted && !wanted.has(n)) continue;
-    const { items } = await doc.getPage(n).then(p => p.getTextContent());
+    const page = await doc.getPage(n);
+    undecoded += unmappedGlyphs(await page.getOperatorList(), pdfjs.OPS);
+    const { items } = await page.getTextContent();
 
     const lines = [];
     let line = [];
@@ -104,7 +138,7 @@ async function pdfLines(filePath, wanted) {
     pages.push(lines.map(joinOneLine).filter(Boolean));
   }
   await doc.cleanup();
-  return pages;
+  return { pages, undecoded };
 }
 
 /**
@@ -118,9 +152,10 @@ async function pdfLines(filePath, wanted) {
 async function verify(inputPath, { raw, html, pages: wanted = null }) {
   const { repeatedFurniture } = require('./pdf-extract');
   const fromPage = path.extname(inputPath).toLowerCase() === '.pdf';
-  const pages = fromPage
+  const read = fromPage
     ? await pdfLines(inputPath, wanted)
-    : [raw.split('\n').filter(line => !OWN_MARKUP.test(line))];
+    : { pages: [raw.split('\n').filter(line => !OWN_MARKUP.test(line))], undecoded: 0 };
+  const { pages, undecoded } = read;
 
   const rendered = renderedText(html);
   const haystack = normalise(rendered);
@@ -173,7 +208,7 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     if (source !== output) renumbered.push({ value, source, output });
   }
 
-  return { missing, reordered, furniture, renumbered, lines: seen.size, fromPage };
+  return { missing, reordered, furniture, renumbered, undecoded, lines: seen.size, fromPage };
 }
 
 const SHOWN = 8;
@@ -210,10 +245,20 @@ function report(result, { name }) {
     if (result.renumbered.length > SHOWN) lines.push(`    ... and ${result.renumbered.length - SHOWN} more`);
   }
 
-  if (!result.missing.length && !result.renumbered.length) lines.push('  No text lost, no number changed.');
+  if (result.undecoded) {
+    lines.push(`  UNDECODED — ${result.undecoded} glyph(s) the page draws carry no character:`);
+    lines.push('    they are absent from the extraction and from the output alike, so nothing');
+    lines.push('    else here can see them. The page shows text this conversion does not hold.');
+  }
+
+  if (passed(result)) lines.push('  No text lost, no number changed.');
   return lines.join('\n');
 }
 
-const passed = result => !result.missing.length && !result.renumbered.length;
+// A glyph the page draws and the text layer never yielded is text the reader can see
+// and the output cannot hold, which is the same loss as any other — so it fails the
+// same way rather than being reported as a note under a clean verdict.
+const passed = result =>
+  !result.missing.length && !result.renumbered.length && !result.undecoded;
 
-module.exports = { verify, report, passed, _internals: { renderedText, numberCounts, normalise } };
+module.exports = { verify, report, passed, _internals: { renderedText, numberCounts, normalise, unmappedGlyphs } };

@@ -306,6 +306,33 @@ const rtlEmitted = [...ltrEmitted].reverse();   // descending x: already reading
 assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   'the same line emitted right-to-left must read identically');
 
+// A glyph the page draws that carries no character of its own is lost before anything
+// this tool does: it is absent from the extraction and from the output alike, so every
+// other check here compares two sides that agree about text neither of them has.
+{
+  const { verify: v } = { verify: require('./verify') };
+  const OPS = { showText: 44 };
+  const glyphs = list => ({ fnArray: [OPS.showText], argsArray: [[list]] });
+  const g = unicode => ({ unicode });
+
+  assert(v._internals.unmappedGlyphs(glyphs([g('ש'), g('ל'), g('ו'), g('ם')]), OPS) === 0,
+    'a page whose glyphs all carry a character reports nothing');
+  assert(v._internals.unmappedGlyphs(glyphs([g('1'), g(''), g('0'), g('�')]), OPS) === 2,
+    'a glyph with no character, and one that decoded to the replacement, both count');
+
+  // Positioning adjustments sit in the same array as the glyphs and are not glyphs.
+  assert(v._internals.unmappedGlyphs(glyphs([g('א'), -250, g('ב')]), OPS) === 0,
+    'the kerning numbers between glyphs must not be counted as undecoded ones');
+
+  // The verdict has to carry it, or the report would note it under a clean pass.
+  const clean = { missing: [], reordered: [], furniture: [], renumbered: [], undecoded: 0 };
+  assert(v.passed(clean), 'a conversion with nothing wrong still passes');
+  assert(!v.passed({ ...clean, undecoded: 1 }),
+    'a single undecoded glyph is text the reader can see and the output cannot hold');
+  assert(/UNDECODED/.test(v.report({ ...clean, undecoded: 3, lines: 9, fromPage: true }, { name: 'x' })),
+    'and the report names it');
+}
+
 // --pages accepts single pages, ranges and lists, and rejects nonsense
 const { _internals: cli, MAX_PAGE } = require('./convert-args');
 const selected = spec => {
