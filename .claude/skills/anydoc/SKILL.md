@@ -31,6 +31,10 @@ the files are still written, so read the report and say what it found.
 
 Output lands next to the input unless `--out-dir` is given.
 
+For a machine-readable report (JSON) instead of prose, add `--report <file.json>` or
+`--report -` to write to stdout. Useful when the result feeds another tool or pipeline.
+Pass both `--verify` and `--report` to get prose and the JSON structure together.
+
 `${CLAUDE_PLUGIN_ROOT}` resolves to the installed plugin directory. When working inside
 this repository rather than through an install, use `node src/convert.js` instead — the
 converter is the same, only the path differs.
