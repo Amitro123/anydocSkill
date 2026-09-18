@@ -2,14 +2,18 @@
 /**
  * A stand-in for ocrmypdf, used only by test/ocr.test.js.
  *
- * Real OCR needs a real page image to read, which is not something worth building a
- * renderer for just to test this pipeline. What actually needs testing here is
- * src/ocr.js's own logic — the argument handling, the second read through anydoc, and
- * reconciliation — and all of that is exercised the same way whether the text on the
- * output pages came from tesseract or, as here, from FAKE_OCR_PAGE_TEXTS.
+ * src/ocr-args.js's buildSidecarOcrArgs restricts every real invocation to one page, so
+ * this only has to answer one question: what should the --sidecar transcript for
+ * --pages N be? That comes from FAKE_OCR_SIDECAR, a JSON object keyed by page number as
+ * a string, an env var each test case sets. A page missing from it gets an empty
+ * transcript — OCR ran and found nothing, a real and unremarkable outcome, not a stub
+ * bug needing special-casing.
+ *
+ * The output PDF this is also asked to write is never read by src/ocr.js — see
+ * src/ocr-pdf.js's doc comment for why — so a minimal placeholder is enough to exist at
+ * the path ocrmypdf is required to write one to.
  */
-const path = require('path');
-const { writeMixedPdf } = require('../fixtures');
+const fs = require('fs');
 
 if (process.argv.includes('--version')) {
   console.log('fake-ocrmypdf 0.0.0 (test stub)');
@@ -21,6 +25,11 @@ if (process.env.FAKE_OCR_FAIL) {
   process.exit(1);
 }
 
-const output = process.argv[process.argv.length - 1];
-const pageTexts = JSON.parse(process.env.FAKE_OCR_PAGE_TEXTS || '[]');
-writeMixedPdf(path.dirname(output), pageTexts, path.basename(output));
+const argv = process.argv.slice(2);
+const page = argv[argv.indexOf('--pages') + 1];
+const sidecarPath = argv[argv.indexOf('--sidecar') + 1];
+const outputPath = argv[argv.length - 1];
+
+const transcripts = JSON.parse(process.env.FAKE_OCR_SIDECAR || '{}');
+fs.writeFileSync(sidecarPath, transcripts[page] || '', 'utf8');
+fs.writeFileSync(outputPath, '%PDF-1.4\n%%EOF\n', 'latin1');

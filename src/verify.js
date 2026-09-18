@@ -20,6 +20,12 @@
 const path = require('path');
 const crypto = require('crypto');
 
+// pdfjs-dist ships glyph-width metrics for the 14 standard PDF fonts; pointing it there
+// is what stops it warning to stderr whenever a page references one it cannot otherwise
+// measure — harmless to the read itself, but noise worth not having.
+const STANDARD_FONTS = `${path.join(
+  require.resolve('pdfjs-dist/package.json', { paths: [__dirname] }), '..', 'standard_fonts')}/`;
+
 const BIDI = /[‎‏‪-‮⁦-⁩]/g;
 // Characters that exist on one side only: Markdown a renderer consumes, and the cell
 // and bullet marks a renderer adds. Comparing them would report formatting as loss.
@@ -211,7 +217,9 @@ const digest = text =>
 async function pdfLines(filePath, wanted) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { _internals: { joinOneLine } } = require('./pdf-extract');
-  const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
+  const doc = await pdfjs.getDocument({
+    url: filePath, useSystemFonts: true, standardFontDataUrl: STANDARD_FONTS,
+  }).promise;
 
   const pages = [];
   let undecoded = 0;

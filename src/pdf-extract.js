@@ -15,6 +15,12 @@
 const PARAGRAPH_GAP_RATIO = 1.6;  // line gap beyond this multiple of the body gap starts a paragraph
 const SHORT_LINE_RATIO = 0.75;    // a line narrower than this fraction of the column ends a paragraph
 
+// pdfjs-dist ships glyph-width metrics for the 14 standard PDF fonts; pointing it there
+// is what stops it warning to stderr whenever a page references one it cannot otherwise
+// measure — harmless to the read itself, but noise worth not having.
+const STANDARD_FONTS = `${require('path').join(
+  require.resolve('pdfjs-dist/package.json', { paths: [__dirname] }), '..', 'standard_fonts')}/`;
+
 async function loadPdfJs() {
   return import('pdfjs-dist/legacy/build/pdf.mjs');
 }
@@ -470,7 +476,9 @@ async function readPages(doc, keep, filePath) {
 async function pdfToMarkdown(filePath, opts = {}) {
   const { pages: wanted = null } = opts;
   const pdfjs = await loadPdfJs();
-  const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
+  const doc = await pdfjs.getDocument({
+    url: filePath, useSystemFonts: true, standardFontDataUrl: STANDARD_FONTS,
+  }).promise;
 
   if (wanted) {
     const missing = wanted.beyond(doc.numPages);

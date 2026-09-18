@@ -40,6 +40,9 @@ jobs:
       - name: Integration tests
         run: npm run test:integration
 
+      - name: OCR page-assembly tests
+        run: npm run test:ocr-pdf
+
       # ocrmypdf is not installed on this runner, on purpose — the OCR companion is meant
       # to work without anydoc itself ever depending on it. These tests cover that real
       # absence plus the rest of the pipeline against a stub in test/fake-bin.

@@ -44,6 +44,7 @@ converted wrongly and nobody noticed until they read it:
 | [Tables](#tables) | Recovering columns, and refusing to guess when they are ambiguous |
 | [Page furniture](#page-furniture) | Dropping a repeated header without deleting a repeated template |
 | [`--verify`](#checking-a-conversion) | Reading the page back against the output, mechanically |
+| [`anydoc-ocr`](#anydoc-ocr-ocr-for-the-pages-this-cannot-read-kept-separate-on-purpose) | OCR for the pages this cannot read, checked the same way as everything else |
 | [Regression corpus](#regression-corpus) | Real documents, kept outside this repo, pinned to snapshots |
 
 The one rule underneath all of it: **losing text silently is worse than converting
@@ -154,7 +155,9 @@ no warning at all, and it looks like Hebrew.
 ### Where OCR wins
 
 **When there is no text layer.** A scan, or a deck exported as pictures. This refuses
-with exit 4 and points at `ocrmypdf` — division of labour, not failure.
+with exit 4 rather than writing nothing and calling it done — division of labour, not
+failure. The [`anydoc-ocr`](#anydoc-ocr-ocr-for-the-pages-this-cannot-read-kept-separate-on-purpose)
+skill, further down, is the other half of that division.
 
 **When the text layer is wrong.** A font whose tables say `א` where the page shows `ב`
 gives complete, confident, wrong text here. OCR would read it correctly, because it
@@ -220,23 +223,38 @@ node src/ocr.js report.pdf --out-dir out --lang heb+eng
 ```
 
 It runs this converter first to see which pages, if any, are `PICTURE ONLY`; if none
-are, it says so and stops. Otherwise it runs `ocrmypdf` restricted to exactly those
-pages — never the ones with `IMAGE AMONG TEXT`, which already have good text next to
-the image and are not this tool's to touch — then runs this converter again on the
-result and compares the two `--report`s page by page using their digests.
+are, it says so and stops. Otherwise it runs `ocrmypdf` once per such page — never the
+ones with `IMAGE AMONG TEXT`, which already have good text next to the image and are
+not this tool's to touch — reads back what Tesseract recognised, and hands the result
+to this converter again for the same checks any other document gets.
 
-**A page that already had text must come back with the exact same text, or nothing is
-written at all.** That is not a warning, it is the entire mechanism: `src/reconcile.js`
-checks every page outside the ones OCR was asked to touch, and a single changed digest
-refuses the whole run rather than silently keeping the parts that worked. OCR
-recompressing an image, or disagreeing with this tool about which pages need it, are
-exactly the kind of thing that check exists to catch — not hypothetically; building it
-surfaced a `[null, null]` form-matrix crash and a repetition heuristic that mistook a
-different chart on every page for one image repeating (see `#31` in the issue tracker),
-and reconciliation is what would have caught either one turning into silent data loss.
+**`ocrmypdf`'s own output PDF is never read for its text.** Tested against a real,
+fully-scanned Hebrew document, its embedded OCR text layer came back with every word
+character-reversed — not a Tesseract recognition error, but something that goes wrong
+specifically in how `ocrmypdf` writes its recognition into the page's content stream.
+Its `--sidecar` transcript is a different code path, Tesseract's own plain-text output
+ahead of that step, and came back correct on every page checked. So this never reads
+the broken text in the first place: it takes the transcript and draws it onto a fresh
+page of its own (`src/ocr-pdf.js`, via `pdf-lib` and a bundled Hebrew-capable font),
+which only has to extract right, not look right — nothing here ever renders a page, only
+reads the string its text operators draw, in the order they draw it.
 
-What it writes: `<title>.md`/`.html` from the OCR'd file, and `<title>.ocr-report.json`
-naming exactly which pages' text is a guess:
+**A page that already had text comes back with the exact same text, structurally, not
+just by a check catching it if not.** The pages OCR was not asked to touch are copied
+directly from the original file's own PDF objects when the corrected document is
+assembled — never re-extracted, never re-rendered — so there is nothing on that path
+left for a misbehaving OCR run to corrupt. `src/reconcile.js` still compares every
+page's digest before and after, because a guarantee worth having is worth checking
+rather than assumed, and it is where a page count changing or a stray mismatch would
+surface if that assembly step were ever wrong. Building this surfaced two real defects
+before it ever reached a document — a `[null, null]` form-matrix crash and a repetition
+heuristic that mistook a different chart on every page for one image repeating (`#31`
+in the issue tracker) — both in the size-measuring code `IMAGE AMONG TEXT` reuses, not
+in this path itself, but exactly the kind of thing reconciliation exists to catch if it
+ever recurs here.
+
+What it writes: `<title>.md`/`.html` from the assembled document, and
+`<title>.ocr-report.json` naming exactly which pages' text is a guess:
 
 ```json
 {
@@ -244,6 +262,7 @@ naming exactly which pages' text is a guess:
   "tool": "anydoc-ocr",
   "source": "report.pdf",
   "lang": "heb+eng",
+  "ocrPassed": [4, 7],
   "recovered": [4, 7],
   "stillUnreadable": [],
   "provenance": { "1": "original", "4": "ocr", "7": "ocr" }
@@ -255,6 +274,11 @@ against the document, because there is nothing left of the document to check it
 against. `stillUnreadable` means OCR found nothing either; that content genuinely is not
 recoverable this way, and no flag changes that — there is no `--force` here, because
 there is no safe way to override a failed reconciliation.
+
+Run for real against a fully-scanned children's-story PDF in this project's private
+corpus — the document that found the reversal bug in the first place — it recovered
+readable, correctly-ordered Hebrew on all 8 pages, and `--verify` on the result reported
+what it reports on any clean document: no text lost, no number changed.
 
 Neither `ocrmypdf` nor Tesseract's Hebrew language data ship with this project. Missing
 either exits 5 and names the exact install command for the platform it's running on.
@@ -673,6 +697,7 @@ and go back through the skill once the change is released.
 npm test                    # everything below
 npm run test:unit
 npm run test:integration
+npm run test:ocr-pdf
 npm run test:ocr
 ANYDOC_CORPUS=~/anydoc-corpus npm run corpus
 ```
@@ -681,12 +706,19 @@ The unit suite covers pure helpers; the integration suite generates a document i
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
 
-`test:ocr` covers `anydoc-ocr` without needing `ocrmypdf` installed, which it is not
-here or in CI: `test/fake-bin/` stands in for `ocrmypdf` and Tesseract, so what runs is
-real `src/ocr.js` and `src/reconcile.js` code against output the test fully controls —
-including the refusal path, by having the stub change a page it should not have. The
-one thing that cannot be faked, the tool actually being missing, is not faked either;
-that assertion is a real failure on a runner with no OCR installed, this one included.
+`test:ocr-pdf` covers `src/ocr-pdf.js` — the corrected page an OCR transcript becomes,
+and the assembly that copies every other page from the original file untouched — with
+no OCR tool involved at all; it only needs `pdf-lib` and a transcript string.
+
+`test:ocr` covers the rest of `anydoc-ocr` without needing `ocrmypdf` installed, which
+it is not here or in CI: `test/fake-bin/` stands in for `ocrmypdf` and Tesseract, so
+what runs is real `src/ocr.js` code against transcripts the test fully controls. It does
+not try to make the stub corrupt a page it was not asked to touch — `assembleFinalPdf`
+copies that page's own PDF objects directly, so there is no longer a path from a
+misbehaving OCR run to that outcome, and `test:ocr-pdf` is what proves it. The one thing
+that still cannot be faked, the tool actually being missing, runs with `PATH` emptied
+out rather than relying on this machine not having it installed, which is not something
+a test should have to assume about whatever happens to be running it.
 
 Three of those fixtures are page shapes that broke a real conversion, rebuilt as the
 smallest page that still poses the problem: a table whose first column is headed `#`,

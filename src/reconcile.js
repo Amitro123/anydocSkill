@@ -49,8 +49,11 @@ function reconcile(before, after) {
       // This is the one page kind OCR was asked to touch, so a changed digest here is
       // the point rather than a problem — there was no text before, so nothing to compare
       // it against. Whether it produced anything is a different question, answered by
-      // whether the page still reads as a picture.
-      if (afterPage.picture) {
+      // whether the page holds any text now — not by whether it "reads as a picture" in
+      // verify.js's sense, which asks whether an image was drawn. A page rebuilt from an
+      // OCR transcript draws no image at all, found or not, so that flag never applies
+      // to it; an empty page is the one unambiguous signal either kind of page can give.
+      if (!afterPage.lines) {
         stillUnreadable.push(page);
         provenance[page] = 'unreadable';
       } else {

@@ -1,15 +1,16 @@
 {
   "name": "anydoc-skill",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Claude Code skill: convert documents to Markdown and HTML with correct Hebrew RTL layout",
   "bin": {
     "anydoc": "src/convert.js",
     "anydoc-ocr": "src/ocr.js"
   },
   "scripts": {
-    "test": "npm run test:versions && npm run test:unit && npm run test:integration && npm run test:ocr && npm run corpus",
+    "test": "npm run test:versions && npm run test:unit && npm run test:integration && npm run test:ocr-pdf && npm run test:ocr && npm run corpus",
     "test:unit": "node src/rtl.test.js",
     "test:integration": "node test/integration.test.js",
+    "test:ocr-pdf": "node test/ocr-pdf.test.js",
     "test:ocr": "node test/ocr.test.js",
     "convert": "node src/convert.js",
     "ocr": "node src/ocr.js",
@@ -27,8 +28,10 @@
   "license": "MIT",
   "dependencies": {
     "@firecrawl/anydoc": "^0.2.4",
+    "@pdf-lib/fontkit": "^1.1.1",
     "adm-zip": "^0.6.1",
     "marked": "^18.0.13",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289"
   },
   "engines": {
@@ -36,6 +39,7 @@
   },
   "files": [
     "src",
+    "assets",
     ".claude",
     "README.md",
     "LICENSE"

@@ -33,36 +33,60 @@ function parseArgs(argv) {
   return args;
 }
 
-// A plain comma list. ocrmypdf's --pages also accepts ranges ("3-9"), but the pages
-// this ever calls it with come from a --report's pictureOnly array — usually few and
-// rarely contiguous — so collapsing them into ranges would add code with nothing to
-// show for it. A list is exactly as valid an argument as a range is.
-function pageListArg(pages) {
-  return pages.join(',');
-}
-
 /**
- * The ocrmypdf invocation, kept pure so the argument list — the part most likely to
- * need a flag added or changed later — is something a unit test can check without
- * ocrmypdf installed to run it against.
+ * One page, one ocrmypdf invocation.
  *
- * --pages restricts the run to exactly the pages this decided are unreadable; --skip-text
- * is a second, independent guard saying the same thing in ocrmypdf's own terms, for the
- * case where its idea of "has text" ever disagrees with anydoc's. Between the two, every
- * other page is supposed to leave this untouched — and src/reconcile.js is what actually
- * checks that it did, rather than trusting the flags alone to have worked.
+ * ocrmypdf's --sidecar writes a single transcript file for the whole document it is
+ * given, one chunk per page, and a page it was told to leave alone becomes a bracketed
+ * placeholder rather than disappearing — chunks that span a *range* of skipped pages
+ * when several are consecutive. That makes chunk position depend on how many pages
+ * around the one wanted were also skipped, which is fragile to parse back out. Running
+ * one page at a time sidesteps it entirely: the sidecar for that run holds exactly one
+ * real chunk, unambiguously, so parseSidecar() below never has to reconstruct a page
+ * number from position.
+ *
+ * --pages restricts the run to that one page; --skip-text is a second, independent
+ * guard saying the same thing in ocrmypdf's own terms, for the case where its idea of
+ * "has text" ever disagrees with anydoc's.
+ *
+ * The output PDF this produces is never read — see src/ocr-pdf.js for why: its own
+ * embedded OCR text layer is exactly the thing found to come back character-reversed on
+ * real Hebrew scans, in a way the plain-text --sidecar transcript alongside it does not.
+ * It still has to be written, since ocrmypdf takes an output path as a required argument.
  */
-function buildOcrArgs(inputPath, outputPath, pages, lang) {
+function buildSidecarOcrArgs(inputPath, outputPath, sidecarPath, page, lang) {
   return [
     '-l', lang,
-    '--pages', pageListArg(pages),
+    '--pages', String(page),
     '--skip-text',
     '--output-type', 'pdf',
-    // Recompressing images is ocrmypdf's default and is no part of this tool's job — it
-    // exists to add missing text, not to shrink a file that converts fine everywhere else.
     '--optimize', '0',
+    '--sidecar', sidecarPath,
     inputPath, outputPath,
   ];
 }
 
-module.exports = { parseArgs, pageListArg, buildOcrArgs, _internals: { FLAGS } };
+// A whole chunk naming a page or range ocrmypdf was told to leave alone — never a
+// document's own text, which makes it safe to filter out unconditionally rather than
+// trying to tell it apart from a real transcript that happens to start similarly.
+const SKIPPED_CHUNK = /^\[OCR skipped on page\(s\) [\d,\s-]+\]$/;
+
+/**
+ * The real transcript out of a --sidecar file, with ocrmypdf's own skip placeholders
+ * removed.
+ *
+ * Split on the form feed ocrmypdf uses as a page separator — not on blank lines, which
+ * a real multi-paragraph transcript has plenty of. What is left after the skip chunks
+ * are dropped is empty when OCR was run but found nothing, which is a real, reportable
+ * outcome rather than an error this needs to treat specially: an empty transcript
+ * reads as an empty page everywhere downstream, exactly as a page with no text should.
+ */
+function parseSidecar(text) {
+  const chunks = text.split('\f').map(c => c.trim()).filter(Boolean);
+  return chunks.filter(c => !SKIPPED_CHUNK.test(c)).join('\n\n');
+}
+
+module.exports = {
+  parseArgs, buildSidecarOcrArgs, parseSidecar,
+  _internals: { FLAGS, SKIPPED_CHUNK },
+};
