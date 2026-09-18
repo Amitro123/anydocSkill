@@ -335,13 +335,120 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   // Images ride the same pass. A page that draws one and holds no text is a page this
   // cannot read at all — the one case where OCR does better, so it is said plainly.
   const painted = { fnArray: [OPS.paintImage, OPS.showText], argsArray: [[], [[g('א')]]] };
-  assert(v._internals.readPage(painted, { ...OPS, paintImageXObject: OPS.paintImage }).images === 1,
+  assert(v._internals.readPage(painted, { ...OPS, paintImageXObject: OPS.paintImage }).images.length === 1,
     'a painted image is counted');
   assert(v.passed({ ...clean, pictures: [3, 4] }),
     'a page that is only a picture does not fail the run — a cover page is not a defect');
   const noted = v.report({ ...clean, pictures: [3, 4], lines: 9, fromPage: true }, { name: 'x' });
   assert(/PICTURE ONLY — page\(s\) 3, 4/.test(noted) && /OCR/.test(noted),
     `but the report names the pages and points at OCR — got:\n${noted}`);
+}
+
+// How big an image lands on the page, which is a question only the transformation
+// matrix can answer: the image itself is always painted into the unit square.
+{
+  const v = require('./verify');
+  const OPS = {
+    showText: 44, save: 10, restore: 11, transform: 12,
+    paintImageXObject: 85, paintFormXObjectBegin: 74, paintFormXObjectEnd: 75,
+  };
+  const A4 = 612 * 792;
+  const drawn = (fnArray, argsArray) =>
+    v._internals.readPage({ fnArray, argsArray }, OPS, A4).images;
+
+  const [placed] = drawn(
+    [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+    [null, [400, 0, 0, 300, 72, 320], ['img'], null]);
+  assert(Math.round(placed.width) === 400 && Math.round(placed.height) === 300,
+    `the matrix gives the drawn size, got ${placed.width}x${placed.height}`);
+  assert(Math.abs(placed.share - (400 * 300) / A4) < 1e-9, 'and its share of the page');
+
+  // Rotated a quarter turn: the edges swap places but keep their lengths.
+  const [turned] = drawn(
+    [OPS.transform, OPS.paintImageXObject],
+    [[0, 200, -150, 0, 0, 0], ['img']]);
+  assert(Math.round(turned.width) === 200 && Math.round(turned.height) === 150,
+    `a rotated image keeps its size, got ${turned.width}x${turned.height}`);
+
+  // restore has to undo the transform, or everything after an illustration inherits
+  // its scale and the next logo measures the size of a page.
+  const [after] = drawn(
+    [OPS.save, OPS.transform, OPS.restore, OPS.transform, OPS.paintImageXObject],
+    [null, [400, 0, 0, 300, 0, 0], null, [40, 0, 0, 40, 0, 0], ['img']]);
+  assert(Math.round(after.width) === 40, `restore must undo the transform, got ${after.width}`);
+
+  // A form XObject with no matrix of its own. pdf.js passes [null, null], and reading
+  // that as a matrix is what crashed this on the first real document it met.
+  const [inForm] = drawn(
+    [OPS.paintFormXObjectBegin, OPS.transform, OPS.paintImageXObject, OPS.paintFormXObjectEnd],
+    [[null, null], [50, 0, 0, 50, 0, 0], ['img'], null]);
+  assert(Math.round(inForm.width) === 50, 'a form without a matrix is an identity, not a crash');
+}
+
+// Which of those images is worth naming. A page that draws one and holds no text is
+// already reported whole; the quiet case is a chart or a screenshot among paragraphs,
+// where the page reads as ordinary and its words are in neither side of the comparison.
+{
+  const { _internals: { illustrations, MIN_ILLUSTRATION_SHARE } } = require('./verify');
+  const image = (share, at = 0, pixels = { width: 800, height: 600 }) =>
+    ({ width: 300, height: 200, x: at, y: at, share, pixels });
+  const page = (number, drawn, lines = ['text']) => ({ number, drawn, lines, picture: false });
+
+  const big = MIN_ILLUSTRATION_SHARE + 0.05;
+  const small = MIN_ILLUSTRATION_SHARE - 0.05;
+
+  assert(illustrations([page(1, [image(big)])]).length === 1,
+    'a large image beside text is named');
+  assert(illustrations([page(1, [image(small)])]).length === 0,
+    'a small one is not — a report naming every logo is one nobody reads');
+
+  // The same mark in the same place on most pages is a letterhead, whatever its size.
+  const everywhere = [1, 2, 3, 4].map(n => page(n, [image(big)]));
+  assert(illustrations(everywhere).length === 0,
+    'an image repeated across the document is template, not content');
+
+  const once = [page(1, []), page(2, []), page(3, [image(big)]), page(4, [])];
+  assert.deepStrictEqual(illustrations(once).map(i => i.page), [3],
+    'but one page out of four is content, and is named');
+
+  // A single-page document has nothing to repeat across, and the majority rule must
+  // not read its only page as a majority.
+  assert(illustrations([page(1, [image(big)])]).length === 1,
+    'a one-page document is not its own template');
+
+  const scanned = { number: 1, drawn: [image(0.9)], lines: [], picture: true };
+  assert(illustrations([scanned]).length === 0,
+    'a page that is only a picture is reported as one, not twice');
+
+  // Size on the page is not the same question as size in pixels. A tint is drawn from
+  // a handful of pixels and stretched, and a stretched swatch cannot hold a word.
+  const swatch = { width: 2, height: 2 };
+  assert(illustrations([page(1, [image(big, 0, swatch)])]).length === 0,
+    'a four-pixel swatch stretched across the page holds no words, however large');
+  assert(illustrations([page(1, [image(big, 0, null)])]).length === 1,
+    'an image that states no resolution is named, not assumed to be a swatch');
+
+  // A different picture drawn into the same frame on each page is how a report is
+  // built. Keying on position alone read the whole series as one mark repeating.
+  const series = [
+    page(1, [image(big, 40, { width: 800, height: 600 })]),
+    page(2, [image(big, 40, { width: 640, height: 480 })]),
+  ];
+  assert(illustrations(series).length === 2,
+    'a chart per page in the same frame is a series, not a letterhead');
+}
+
+// It is an observation, not a failure: a full-page diagram is not a defect, and only
+// the reader knows whether those pages carry anything needed.
+{
+  const v = require('./verify');
+  const clean = { missing: [], reordered: [], furniture: [], renumbered: [], undecoded: 0 };
+  const found = [{ page: 4, width: 534, height: 247, share: 0.26 }];
+  assert(v.passed({ ...clean, illustrations: found }),
+    'an image among text does not fail the run');
+  const said = v.report({ ...clean, illustrations: found, lines: 9, fromPage: true }, { name: 'x' });
+  assert(/IMAGE AMONG TEXT — a large image sits/.test(said) && /p4: 534x247 pt, 26% of the page/.test(said),
+    `but the report names it with its size — got:\n${said}`);
 }
 
 // --pages accepts single pages, ranges and lists, and rejects nonsense

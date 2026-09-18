@@ -174,9 +174,31 @@ this cannot read at all:
     or report them missing. OCR the document if those pages matter.
 ```
 
-It is reported, not failed — a cover page or a full-page diagram is not a defect, and
-only you know whether those pages carry anything you need. A screenshot sitting *among*
-paragraphs is still invisible: the page has text, so nothing marks it.
+A screenshot sitting *among* paragraphs is the quieter half of the same problem —
+the page has text, so it reads as ordinary — and it is named too:
+
+```
+  IMAGE AMONG TEXT — 2 large images sit beside text, where nothing marks them:
+    p4: 534x247 pt, 26% of the page
+    p11: 444x618 pt, 55% of the page
+    Any words inside are in neither the text layer nor the output, so no
+    check here can see them. Read those pages if they carry content.
+```
+
+Both are reported, not failed — a cover page or a full-page diagram is not a defect, and
+only you know whether those pages carry anything you need.
+
+Three rules keep that quiet enough to be worth reading, because a report naming every
+image is one nobody reads. An image must cover **a tenth of the page**: across both
+corpora decoration sits under 4% and the things worth naming sit above 22%, so the
+threshold is the gap between them. It must **not repeat** in the same place on most
+pages, which is what a letterhead does whatever its size. And it must have **at least
+64 pixels on each side**: a two-by-two swatch stretched across half a page is how a PDF
+draws a tint, and however large it lands it cannot contain a word. An image that states
+no resolution is named rather than assumed small — the point is not to hide things.
+
+What this still cannot tell you is whether the image holds any text at all. A photograph
+and a screenshot of a table look identical from here. It names the page; you decide.
 
 ### The order worth following
 
@@ -326,12 +348,14 @@ Verified letter.pdf: 277 lines of page text.
   No text lost, no number changed.
 ```
 
-It reports five things: lines the page shows and the output does not, lines that kept
-every word but changed order (a table row read across rather than down), header and
-footer lines dropped on purpose, numbers whose tallies differ — which is how a renumbered
-list shows up, since a renderer generates those numbers rather than storing them — and
-glyphs the page draws that carry no character at all. Exit code is 3 for any of those
-that mean text the reader can see is not in the output.
+It reports lines the page shows and the output does not, lines that kept every word but
+changed order (a table row read across rather than down), header and footer lines dropped
+on purpose, numbers whose tallies differ — which is how a renumbered list shows up, since
+a renderer generates those numbers rather than storing them — glyphs the page draws that
+carry no character at all, and [pages whose content is a picture](#where-ocr-wins) rather
+than text. Exit code is 3 for the ones that mean text the reader can see is not in the
+output; what an image holds is reported without failing the run, because only you can say
+whether it mattered.
 
 Every defect this converter has had was visible this way. Finding them meant reading a
 converted document against its original by eye, which does not scale and misses the
@@ -403,6 +427,7 @@ node src/convert.js statement.pdf --report -   # stdout, for a pipe
   "passed": true,
   "totals": { "pages": 12, "lines": 277, "undecoded": 0 },
   "pictureOnly": [3, 4],
+  "illustrations": [{ "page": 7, "width": 534, "height": 247, "share": 0.26 }],
   "pages": [
     { "page": 1, "lines": 24, "characters": 812, "digest": "9aef0cfd287ade6f",
       "images": 0, "undecoded": 0, "picture": false }
@@ -418,9 +443,9 @@ something, and the report is written either way.
 
 Three things are worth knowing about the shape:
 
-- **`pictureOnly` is a field, not a sentence.** Pages this cannot read are what another
-  tool would be called in for, and handing them over as text inside a paragraph makes
-  the handover a parsing problem.
+- **`pictureOnly` and `illustrations` are fields, not sentences.** Pages this cannot
+  read are what another tool would be called in for, and handing them over as text
+  inside a paragraph makes the handover a parsing problem.
 - **`findings` are untruncated.** The prose report stops at eight of each; this does not.
 - **`digest` is a fingerprint of one page's text**, over the normalised characters, so
   whitespace and markup do not register as a change and a single different character

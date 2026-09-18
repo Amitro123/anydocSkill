@@ -412,6 +412,82 @@ const writeTwoColumnPdf = dir => writeLaidOutPdf(dir, [[
  * end-to-end. They are generated rather than committed so the suite carries no real
  * document, and so what is under test is readable here rather than hidden in a binary.
  */
+/**
+ * Pages of ordinary text carrying images that are not alike.
+ *
+ * Three of them, and only one is worth a word:
+ *
+ *   - a logo in the same corner of every page — a letterhead, whatever its size
+ *   - a chart on one page, a quarter of the page, at a resolution that could hold text
+ *   - a tint on another page, drawn just as large, out of four pixels
+ *
+ * A report that names all three is one nobody reads, and the reasons for dropping two
+ * of them are different: repetition makes the first template, and a two-by-two swatch
+ * stretched across a quarter page cannot contain a word however big it is drawn.
+ * Nothing else pins either rule, and nothing would report getting them wrong — the
+ * conversion is byte-identical whichever way it goes, because no image was ever
+ * readable. Only the verification changes.
+ */
+function writeIllustratedPdf(dir, count = 3) {
+  const image = (pixels, hex) =>
+    `<</Type/XObject/Subtype/Image/Width ${pixels}/Height ${pixels}/ColorSpace/DeviceGray` +
+    `/BitsPerComponent 8/Filter/ASCIIHexDecode/Length ${hex.length + 1}>>\n` +
+    `stream\n${hex}>\nendstream`;
+
+  // Content is irrelevant — what is under test is the size it is drawn at and the
+  // resolution it is drawn from — so both are flat grey.
+  const flat = pixels => 'aa'.repeat(pixels * pixels);
+
+  const streams = [];
+  for (let n = 1; n <= count; n++) {
+    let stream =
+      `BT /F1 12 Tf 72 720 Td (Page ${n}: the quarterly figures are set out below.) Tj ET\n` +
+      `BT /F1 12 Tf 72 700 Td (Revenue for region ${n} rose over the period reviewed.) Tj ET\n` +
+      // The letterhead: small, and in the same corner throughout.
+      `q 40 0 0 40 520 730 cm /Logo Do Q\n`;
+    // The chart: a quarter of the page, and enough pixels to hold words.
+    if (n === 2) stream += `q 400 0 0 300 72 320 cm /Chart Do Q\n`;
+    // The tint: drawn just as large, out of four pixels, and somewhere else on the
+    // page so that it is dropped for its resolution rather than for repeating the chart.
+    if (n === 3) stream += `q 400 0 0 300 100 200 cm /Tint Do Q\n`;
+    streams.push(stream);
+  }
+
+  // Object layout: 1 catalog, 2 pages, 3 font, 4 tint, 5 chart, then a page and a
+  // stream for each sheet.
+  const pageId = n => 6 + (n - 1) * 2;
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    `<</Type/Pages/Kids[${Array.from({ length: count }, (_, i) => `${pageId(i + 1)} 0 R`).join(' ')}]/Count ${count}>>`,
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+    image(2, flat(2)),
+    image(64, flat(64)),
+  ];
+  for (let n = 1; n <= count; n++) {
+    objects.push(
+      `<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>` +
+      `/XObject<</Logo 4 0 R/Tint 4 0 R/Chart 5 0 R>>>>/Contents ${pageId(n) + 1} 0 R>>`,
+      `<</Length ${streams[n - 1].length}>>\nstream\n${streams[n - 1]}\nendstream`
+    );
+  }
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+
+  const file = path.join(dir, 'illustrated.pdf');
+  fs.writeFileSync(file, pdf, 'latin1');
+  return file;
+}
+
 function writeCorpus(dir) {
   return [
     writeInvoicePdf(dir),
@@ -420,6 +496,7 @@ function writeCorpus(dir) {
     writeTwoColumnPdf(dir),
     writePdf(dir),
     writeMultiPagePdf(dir, 3),
+    writeIllustratedPdf(dir),
     writePptx(dir),
     writeXlsx(dir),
     writeCsv(dir),
@@ -431,5 +508,5 @@ module.exports = {
   HEBREW, tempDir, EMISSION_ORDERS, writeTwoColumnPdf, writeCorpus,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
-  writeStatementPdf, writeRunningHeaderColumnsPdf,
+  writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf,
 };
