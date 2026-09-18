@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+/**
+ * A stand-in for ocrmypdf, used only by test/ocr.test.js.
+ *
+ * Real OCR needs a real page image to read, which is not something worth building a
+ * renderer for just to test this pipeline. What actually needs testing here is
+ * src/ocr.js's own logic — the argument handling, the second read through anydoc, and
+ * reconciliation — and all of that is exercised the same way whether the text on the
+ * output pages came from tesseract or, as here, from FAKE_OCR_PAGE_TEXTS.
+ */
+const path = require('path');
+const { writeMixedPdf } = require('../fixtures');
+
+if (process.argv.includes('--version')) {
+  console.log('fake-ocrmypdf 0.0.0 (test stub)');
+  process.exit(0);
+}
+
+if (process.env.FAKE_OCR_FAIL) {
+  process.stderr.write(process.env.FAKE_OCR_FAIL + '\n');
+  process.exit(1);
+}
+
+const output = process.argv[process.argv.length - 1];
+const pageTexts = JSON.parse(process.env.FAKE_OCR_PAGE_TEXTS || '[]');
+writeMixedPdf(path.dirname(output), pageTexts, path.basename(output));

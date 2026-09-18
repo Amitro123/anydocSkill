@@ -174,18 +174,90 @@ this cannot read at all:
     or report them missing. OCR the document if those pages matter.
 ```
 
-It is reported, not failed — a cover page or a full-page diagram is not a defect, and
-only you know whether those pages carry anything you need. A screenshot sitting *among*
-paragraphs is still invisible: the page has text, so nothing marks it.
+A screenshot sitting *among* paragraphs is the quieter half of the same problem —
+the page has text, so it reads as ordinary — and it is named too:
+
+```
+  IMAGE AMONG TEXT — 2 large images sit beside text, where nothing marks them:
+    p4: 534x247 pt, 26% of the page
+    p11: 444x618 pt, 55% of the page
+    Any words inside are in neither the text layer nor the output, so no
+    check here can see them. Read those pages if they carry content.
+```
+
+Both are reported, not failed — a cover page or a full-page diagram is not a defect, and
+only you know whether those pages carry anything you need.
+
+Three rules keep that quiet enough to be worth reading, because a report naming every
+image is one nobody reads. An image must cover **a tenth of the page**: across both
+corpora decoration sits under 4% and the things worth naming sit above 22%, so the
+threshold is the gap between them. It must **not repeat** in the same place on most
+pages, which is what a letterhead does whatever its size. And it must have **at least
+64 pixels on each side**: a two-by-two swatch stretched across half a page is how a PDF
+draws a tint, and however large it lands it cannot contain a word. An image that states
+no resolution is named rather than assumed small — the point is not to hide things.
+
+What this still cannot tell you is whether the image holds any text at all. A photograph
+and a screenshot of a table look identical from here. It names the page; you decide.
 
 ### The order worth following
 
 1. An original `.docx` or `.pptx` if one exists — most reliable of all.
 2. Otherwise this, with `--verify`.
-3. No text layer? `ocrmypdf -l heb+eng`, then this on the result.
+3. No text layer? Use the `anydoc-ocr` skill below, or `ocrmypdf -l heb+eng` by hand,
+   then this on the result.
 
-At step 3, know what the check still means: it verifies the conversion against what OCR
-produced, not against the page. Faithful rendering of an uncertain reading. Read it.
+### anydoc-ocr: OCR for the pages this cannot read, kept separate on purpose
+
+A second skill, `.claude/skills/anydoc-ocr/`, exists for exactly step 3. It is a
+different tool, not a flag on this one, and that separation is the point: this
+converter's whole guarantee is that `--verify` compares output against the page's own
+text. The moment that text is a guess from an image, the comparison is against a guess,
+and blurring that into one tool would blur the guarantee along with it.
+
+```bash
+node src/ocr.js report.pdf --out-dir out --lang heb+eng
+```
+
+It runs this converter first to see which pages, if any, are `PICTURE ONLY`; if none
+are, it says so and stops. Otherwise it runs `ocrmypdf` restricted to exactly those
+pages — never the ones with `IMAGE AMONG TEXT`, which already have good text next to
+the image and are not this tool's to touch — then runs this converter again on the
+result and compares the two `--report`s page by page using their digests.
+
+**A page that already had text must come back with the exact same text, or nothing is
+written at all.** That is not a warning, it is the entire mechanism: `src/reconcile.js`
+checks every page outside the ones OCR was asked to touch, and a single changed digest
+refuses the whole run rather than silently keeping the parts that worked. OCR
+recompressing an image, or disagreeing with this tool about which pages need it, are
+exactly the kind of thing that check exists to catch — not hypothetically; building it
+surfaced a `[null, null]` form-matrix crash and a repetition heuristic that mistook a
+different chart on every page for one image repeating (see `#31` in the issue tracker),
+and reconciliation is what would have caught either one turning into silent data loss.
+
+What it writes: `<title>.md`/`.html` from the OCR'd file, and `<title>.ocr-report.json`
+naming exactly which pages' text is a guess:
+
+```json
+{
+  "schema": 1,
+  "tool": "anydoc-ocr",
+  "source": "report.pdf",
+  "lang": "heb+eng",
+  "recovered": [4, 7],
+  "stillUnreadable": [],
+  "provenance": { "1": "original", "4": "ocr", "7": "ocr" }
+}
+```
+
+Read `recovered` before trusting anything on those pages — that text was never checked
+against the document, because there is nothing left of the document to check it
+against. `stillUnreadable` means OCR found nothing either; that content genuinely is not
+recoverable this way, and no flag changes that — there is no `--force` here, because
+there is no safe way to override a failed reconciliation.
+
+Neither `ocrmypdf` nor Tesseract's Hebrew language data ship with this project. Missing
+either exits 5 and names the exact install command for the platform it's running on.
 
 ## Hebrew and RTL documents
 
@@ -326,12 +398,14 @@ Verified letter.pdf: 277 lines of page text.
   No text lost, no number changed.
 ```
 
-It reports five things: lines the page shows and the output does not, lines that kept
-every word but changed order (a table row read across rather than down), header and
-footer lines dropped on purpose, numbers whose tallies differ — which is how a renumbered
-list shows up, since a renderer generates those numbers rather than storing them — and
-glyphs the page draws that carry no character at all. Exit code is 3 for any of those
-that mean text the reader can see is not in the output.
+It reports lines the page shows and the output does not, lines that kept every word but
+changed order (a table row read across rather than down), header and footer lines dropped
+on purpose, numbers whose tallies differ — which is how a renumbered list shows up, since
+a renderer generates those numbers rather than storing them — glyphs the page draws that
+carry no character at all, and [pages whose content is a picture](#where-ocr-wins) rather
+than text. Exit code is 3 for the ones that mean text the reader can see is not in the
+output; what an image holds is reported without failing the run, because only you can say
+whether it mattered.
 
 Every defect this converter has had was visible this way. Finding them meant reading a
 converted document against its original by eye, which does not scale and misses the
@@ -381,6 +455,57 @@ Verified deck.pptx: 5 extracted lines reached the output (no page to read back �
 This is why a `.docx` is still worth converting from over a PDF of the same document —
 it extracts more reliably in the first place — and why the PDF path is the one with a
 real check behind it.
+
+### The same report, for a program
+
+Everything above is written to be read once, by someone deciding whether to trust a
+conversion. A program reading it back has to scrape prose that exists to be readable,
+and truncates its lists at eight. `--report` gives the same result as a structure:
+
+```bash
+node src/convert.js statement.pdf --report statement.report.json
+node src/convert.js statement.pdf --report -   # stdout, for a pipe
+```
+
+```json
+{
+  "schema": 1,
+  "tool": "anydoc",
+  "version": "0.7.0",
+  "source": "statement.pdf",
+  "fromPage": true,
+  "passed": true,
+  "totals": { "pages": 12, "lines": 277, "undecoded": 0 },
+  "pictureOnly": [3, 4],
+  "illustrations": [{ "page": 7, "width": 534, "height": 247, "share": 0.26 }],
+  "pages": [
+    { "page": 1, "lines": 24, "characters": 812, "digest": "9aef0cfd287ade6f",
+      "images": 0, "undecoded": 0, "picture": false }
+  ],
+  "findings": { "missing": [], "reordered": [], "furniture": [], "renumbered": [] }
+}
+```
+
+`--report` runs the verification whether or not `--verify` is also passed — a report
+from a run that never checked would state a `passed` it had not established. Pass both
+to get the prose as well. Exit codes are unchanged, so exit 3 still means it found
+something, and the report is written either way.
+
+Three things are worth knowing about the shape:
+
+- **`pictureOnly` and `illustrations` are fields, not sentences.** Pages this cannot
+  read are what another tool would be called in for, and handing them over as text
+  inside a paragraph makes the handover a parsing problem.
+- **`findings` are untruncated.** The prose report stops at eight of each; this does not.
+- **`digest` is a fingerprint of one page's text**, over the normalised characters, so
+  whitespace and markup do not register as a change and a single different character
+  does. It answers one question across two separate runs of two different tools: *is
+  this still the same page text?* That matters the moment something is allowed to
+  rewrite a text layer — the failure to catch is a page that already read correctly
+  being quietly re-guessed.
+
+`schema` is a promise that a field means what it meant last time. Check it rather than
+assume it.
 
 ## Regression corpus
 
@@ -545,15 +670,23 @@ and go back through the skill once the change is released.
 ## Tests
 
 ```bash
-npm test                    # both suites
+npm test                    # everything below
 npm run test:unit
 npm run test:integration
+npm run test:ocr
 ANYDOC_CORPUS=~/anydoc-corpus npm run corpus
 ```
 
 The unit suite covers pure helpers; the integration suite generates a document in each
 format, runs it through the CLI, and asserts on the output. Fixtures are built at test
 time, so no documents are stored in this repo.
+
+`test:ocr` covers `anydoc-ocr` without needing `ocrmypdf` installed, which it is not
+here or in CI: `test/fake-bin/` stands in for `ocrmypdf` and Tesseract, so what runs is
+real `src/ocr.js` and `src/reconcile.js` code against output the test fully controls —
+including the refusal path, by having the stub change a page it should not have. The
+one thing that cannot be faked, the tool actually being missing, is not faked either;
+that assertion is a real failure on a runner with no OCR installed, this one included.
 
 Three of those fixtures are page shapes that broke a real conversion, rebuilt as the
 smallest page that still poses the problem: a table whose first column is headed `#`,

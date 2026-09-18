@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// Only --list-langs is used by src/ocr.js, to check the requested languages are there.
+if (process.argv.includes('--list-langs')) {
+  console.log('List of available languages (2):');
+  console.log('eng');
+  console.log('heb');
+}

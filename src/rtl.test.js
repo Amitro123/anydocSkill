@@ -335,13 +335,248 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   // Images ride the same pass. A page that draws one and holds no text is a page this
   // cannot read at all — the one case where OCR does better, so it is said plainly.
   const painted = { fnArray: [OPS.paintImage, OPS.showText], argsArray: [[], [[g('א')]]] };
-  assert(v._internals.readPage(painted, { ...OPS, paintImageXObject: OPS.paintImage }).images === 1,
+  assert(v._internals.readPage(painted, { ...OPS, paintImageXObject: OPS.paintImage }).images.length === 1,
     'a painted image is counted');
   assert(v.passed({ ...clean, pictures: [3, 4] }),
     'a page that is only a picture does not fail the run — a cover page is not a defect');
   const noted = v.report({ ...clean, pictures: [3, 4], lines: 9, fromPage: true }, { name: 'x' });
   assert(/PICTURE ONLY — page\(s\) 3, 4/.test(noted) && /OCR/.test(noted),
     `but the report names the pages and points at OCR — got:\n${noted}`);
+}
+
+// How big an image lands on the page, which is a question only the transformation
+// matrix can answer: the image itself is always painted into the unit square.
+{
+  const v = require('./verify');
+  const OPS = {
+    showText: 44, save: 10, restore: 11, transform: 12,
+    paintImageXObject: 85, paintFormXObjectBegin: 74, paintFormXObjectEnd: 75,
+  };
+  const A4 = 612 * 792;
+  const drawn = (fnArray, argsArray) =>
+    v._internals.readPage({ fnArray, argsArray }, OPS, A4).images;
+
+  const [placed] = drawn(
+    [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore],
+    [null, [400, 0, 0, 300, 72, 320], ['img'], null]);
+  assert(Math.round(placed.width) === 400 && Math.round(placed.height) === 300,
+    `the matrix gives the drawn size, got ${placed.width}x${placed.height}`);
+  assert(Math.abs(placed.share - (400 * 300) / A4) < 1e-9, 'and its share of the page');
+
+  // Rotated a quarter turn: the edges swap places but keep their lengths.
+  const [turned] = drawn(
+    [OPS.transform, OPS.paintImageXObject],
+    [[0, 200, -150, 0, 0, 0], ['img']]);
+  assert(Math.round(turned.width) === 200 && Math.round(turned.height) === 150,
+    `a rotated image keeps its size, got ${turned.width}x${turned.height}`);
+
+  // restore has to undo the transform, or everything after an illustration inherits
+  // its scale and the next logo measures the size of a page.
+  const [after] = drawn(
+    [OPS.save, OPS.transform, OPS.restore, OPS.transform, OPS.paintImageXObject],
+    [null, [400, 0, 0, 300, 0, 0], null, [40, 0, 0, 40, 0, 0], ['img']]);
+  assert(Math.round(after.width) === 40, `restore must undo the transform, got ${after.width}`);
+
+  // A form XObject with no matrix of its own. pdf.js passes [null, null], and reading
+  // that as a matrix is what crashed this on the first real document it met.
+  const [inForm] = drawn(
+    [OPS.paintFormXObjectBegin, OPS.transform, OPS.paintImageXObject, OPS.paintFormXObjectEnd],
+    [[null, null], [50, 0, 0, 50, 0, 0], ['img'], null]);
+  assert(Math.round(inForm.width) === 50, 'a form without a matrix is an identity, not a crash');
+}
+
+// Which of those images is worth naming. A page that draws one and holds no text is
+// already reported whole; the quiet case is a chart or a screenshot among paragraphs,
+// where the page reads as ordinary and its words are in neither side of the comparison.
+{
+  const { _internals: { illustrations, MIN_ILLUSTRATION_SHARE } } = require('./verify');
+  const image = (share, at = 0, pixels = { width: 800, height: 600 }) =>
+    ({ width: 300, height: 200, x: at, y: at, share, pixels });
+  const page = (number, drawn, lines = ['text']) => ({ number, drawn, lines, picture: false });
+
+  const big = MIN_ILLUSTRATION_SHARE + 0.05;
+  const small = MIN_ILLUSTRATION_SHARE - 0.05;
+
+  assert(illustrations([page(1, [image(big)])]).length === 1,
+    'a large image beside text is named');
+  assert(illustrations([page(1, [image(small)])]).length === 0,
+    'a small one is not — a report naming every logo is one nobody reads');
+
+  // The same mark in the same place on most pages is a letterhead, whatever its size.
+  const everywhere = [1, 2, 3, 4].map(n => page(n, [image(big)]));
+  assert(illustrations(everywhere).length === 0,
+    'an image repeated across the document is template, not content');
+
+  const once = [page(1, []), page(2, []), page(3, [image(big)]), page(4, [])];
+  assert.deepStrictEqual(illustrations(once).map(i => i.page), [3],
+    'but one page out of four is content, and is named');
+
+  // A single-page document has nothing to repeat across, and the majority rule must
+  // not read its only page as a majority.
+  assert(illustrations([page(1, [image(big)])]).length === 1,
+    'a one-page document is not its own template');
+
+  const scanned = { number: 1, drawn: [image(0.9)], lines: [], picture: true };
+  assert(illustrations([scanned]).length === 0,
+    'a page that is only a picture is reported as one, not twice');
+
+  // Size on the page is not the same question as size in pixels. A tint is drawn from
+  // a handful of pixels and stretched, and a stretched swatch cannot hold a word.
+  const swatch = { width: 2, height: 2 };
+  assert(illustrations([page(1, [image(big, 0, swatch)])]).length === 0,
+    'a four-pixel swatch stretched across the page holds no words, however large');
+  assert(illustrations([page(1, [image(big, 0, null)])]).length === 1,
+    'an image that states no resolution is named, not assumed to be a swatch');
+
+  // A different picture drawn into the same frame on each page is how a report is
+  // built. Keying on position alone read the whole series as one mark repeating.
+  const series = [
+    page(1, [image(big, 40, { width: 800, height: 600 })]),
+    page(2, [image(big, 40, { width: 640, height: 480 })]),
+  ];
+  assert(illustrations(series).length === 2,
+    'a chart per page in the same frame is a series, not a letterhead');
+}
+
+// It is an observation, not a failure: a full-page diagram is not a defect, and only
+// the reader knows whether those pages carry anything needed.
+{
+  const v = require('./verify');
+  const clean = { missing: [], reordered: [], furniture: [], renumbered: [], undecoded: 0 };
+  const found = [{ page: 4, width: 534, height: 247, share: 0.26 }];
+  assert(v.passed({ ...clean, illustrations: found }),
+    'an image among text does not fail the run');
+  const said = v.report({ ...clean, illustrations: found, lines: 9, fromPage: true }, { name: 'x' });
+  assert(/IMAGE AMONG TEXT — a large image sits/.test(said) && /p4: 534x247 pt, 26% of the page/.test(said),
+    `but the report names it with its size — got:\n${said}`);
+}
+
+// The OCR companion's own argument parsing and its ocrmypdf invocation, both kept in
+// src/ocr-args.js purely so this can check them without ocrmypdf installed.
+{
+  const { parseArgs, pageListArg, buildOcrArgs } = require('./ocr-args');
+
+  const args = parseArgs(['doc.pdf', '--lang', 'heb+eng', '--out-dir', 'out']);
+  assert.strictEqual(args.input, 'doc.pdf');
+  assert.strictEqual(args.lang, 'heb+eng');
+  assert.strictEqual(args.outDir, 'out');
+  assert.strictEqual(args.format, 'both', 'the default format matches convert.js\'s own');
+
+  assert.throws(() => parseArgs(['doc.pdf', '--nope']), /Unknown option/,
+    'an unrecognised flag is refused rather than silently ignored');
+  assert.throws(() => parseArgs(['doc.pdf', '--lang']), /needs a value/);
+  assert.throws(() => parseArgs(['a.pdf', 'b.pdf']), /Only one input file/);
+  assert.throws(() => parseArgs(['doc.pdf', '--format', 'pdf']), /Unknown --format/);
+
+  assert.strictEqual(pageListArg([3, 7, 9]), '3,7,9');
+
+  const argv = buildOcrArgs('in.pdf', 'out.pdf', [3, 7], 'heb+eng');
+  assert(argv.includes('--skip-text'), 'a page that turns out to have text is still left alone');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--pages') + 1, argv.indexOf('--pages') + 2), ['3,7'],
+    'restricted to exactly the pages named, not the whole document');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('-l') + 1, argv.indexOf('-l') + 2), ['heb+eng']);
+  assert(argv[argv.length - 2] === 'in.pdf' && argv[argv.length - 1] === 'out.pdf',
+    'input and output are positional and last, as ocrmypdf expects');
+}
+
+// reconcile() decides what an OCR pass over anydoc's own output was and was not
+// allowed to change. It runs nothing itself, so the whole of its behaviour is here.
+{
+  const { reconcile, reconcileReport } = require('./reconcile');
+
+  const page = (number, digest, picture = false) => ({ page: number, digest, picture });
+  const report = (pages, pictureOnly = []) => ({
+    totals: { pages: pages.length },
+    pictureOnly,
+    pages,
+  });
+
+  // The ordinary case: OCR filled in the pages it was asked to and left the rest alone.
+  {
+    const before = report(
+      [page(1, 'aaa'), page(2, 'bbb', true), page(3, 'ccc')],
+      [2]);
+    const after = report(
+      [page(1, 'aaa'), page(2, 'new-text', false), page(3, 'ccc')],
+      []);
+
+    const result = reconcile(before, after);
+    assert(result.ok, 'a clean OCR pass reconciles');
+    assert.deepStrictEqual(result.recovered, [2], 'the OCR page is recorded as recovered');
+    assert.deepStrictEqual(result.stillUnreadable, [], 'nothing is left unreadable');
+    assert.deepStrictEqual(result.unexpectedChanges, [], 'nothing unexpected happened');
+    assert.deepStrictEqual(result.provenance, { 1: 'original', 2: 'ocr', 3: 'original' },
+      'each page is attributed to where its text came from');
+  }
+
+  // OCR found nothing either. Not a failure of the check — the page is exactly as
+  // unreadable as it was, which is a fact worth keeping rather than an error.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+
+    const result = reconcile(before, after);
+    assert(result.ok, 'OCR finding nothing still reconciles cleanly');
+    assert.deepStrictEqual(result.stillUnreadable, [2]);
+    assert.deepStrictEqual(result.recovered, []);
+  }
+
+  // The one thing this exists to catch: a page that already had a text layer came back
+  // with a different one. --skip-text and --pages are supposed to make this impossible;
+  // this is what actually checks that they did.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+    const after = report([page(1, 'DIFFERENT'), page(2, 'bbb', true)], [2]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'a page that had text and changed anyway must fail reconciliation');
+    assert.strictEqual(result.unexpectedChanges.length, 1);
+    assert.strictEqual(result.unexpectedChanges[0].page, 1);
+    assert(/already had a text layer/.test(result.unexpectedChanges[0].reason));
+  }
+
+  // A page count mismatch is refused even with every digest agreeing — the comparison
+  // above only checks pages present on both sides, and a missing page would otherwise
+  // pass by being absent from both loops.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb'), page(3, 'ccc')]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb')]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'a document that lost a page must not reconcile');
+    assert(!result.pageCount.match);
+    assert.strictEqual(result.pageCount.before, 3);
+    assert.strictEqual(result.pageCount.after, 2);
+  }
+
+  // A page appearing that was not in the original document — OCR does not add pages,
+  // but a silent mismatch here would be harder to trace than a named one.
+  {
+    const before = report([page(1, 'aaa')]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb')]);
+
+    const result = reconcile(before, after);
+    assert(!result.ok, 'an extra page must not reconcile');
+    assert(result.unexpectedChanges.some(c => c.page === 2 && /not in the original/.test(c.reason)));
+  }
+
+  // The report is prose, and has to say the two things that matter: what changed and
+  // whether the result is usable.
+  {
+    const clean = reconcile(
+      report([page(1, 'aaa'), page(2, 'bbb', true)], [2]),
+      report([page(1, 'aaa'), page(2, 'new', false)], []));
+    const said = reconcileReport(clean);
+    assert(/OCR added a text layer to 1 page\(s\): 2/.test(said), `got: ${said}`);
+    assert(/guess, not a reading/.test(said));
+
+    const refused = reconcile(
+      report([page(1, 'aaa')]),
+      report([page(1, 'DIFFERENT')]));
+    const saidRefused = reconcileReport(refused);
+    assert(/REFUSED/.test(saidRefused) && /not being used/.test(saidRefused),
+      `a refused result must say so plainly — got: ${saidRefused}`);
+  }
 }
 
 // --pages accepts single pages, ranges and lists, and rejects nonsense

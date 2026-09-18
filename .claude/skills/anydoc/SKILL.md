@@ -57,6 +57,20 @@ leaves Hebrew word-reversed and unreadable. On failure the command exits without
 Convert from the original `.docx` or `.pptx` if one exists — they extract correctly.
 Use `--force` only when the user wants the output despite the text being scrambled.
 
+**Exit code 4 is different — the document has no text at all** (a scan, a slide
+exported as an image). `--force` there just writes an empty file, which is rarely what
+anyone wants. If the `anydoc-ocr` skill is available, use that instead: it runs OCR on
+exactly the pages that need it and refuses to touch anything else. Otherwise point the
+user at `ocrmypdf` directly.
+
+## When --verify reports PICTURE ONLY
+
+Some pages drew an image and held no text while the rest of the document converted
+fine. That is reported, not failed. If those pages matter, use the `anydoc-ocr` skill
+if it is available — it OCRs exactly those pages and re-checks the result the same way
+this converter checks its own. Do not pass `--force`; nothing about picture-only pages
+is fixed by it.
+
 ## Choosing a source file
 
 If the user has the same document in more than one format, prefer `.docx` or `.pptx`
