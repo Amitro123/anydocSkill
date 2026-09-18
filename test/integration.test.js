@@ -397,6 +397,14 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   const missing = spawnSync(process.execPath, [CLI, pdf, '--report'], { encoding: 'utf8' });
   assert(missing.status === 1 && /--report needs a value/.test(missing.stderr),
     'but an actually missing value is still refused');
+
+  // "-" only means stdout for --report; every other flag it is refused for, the same
+  // as a genuinely missing value — accepting it for --out-dir used to create a literal
+  // "./-" directory instead.
+  const dashOutDir = spawnSync(process.execPath, [CLI, pdf, '--out-dir', '-'], { encoding: 'utf8' });
+  assert(dashOutDir.status === 1 && /--out-dir needs a value/.test(dashOutDir.stderr),
+    `"-" is only meaningful for --report, not --out-dir: ${dashOutDir.stderr}`);
+  assert(!fs.existsSync(path.join(dir, '-')), 'and no literal "-" directory is created');
 }
 
 console.log('All integration tests passed.');

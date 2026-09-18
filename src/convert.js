@@ -52,10 +52,13 @@ function parseArgs(argv) {
       if (!FLAGS.includes(arg)) {
         throw new Error(`Unknown option "${arg}". Options are: ${FLAGS.join(', ')}.`);
       }
-      // A lone "-" is the conventional name for the standard stream, not a flag, and
-      // refusing it here is how `--report -` came back as "--report needs a value".
+      // A lone "-" is the conventional name for the standard stream, and only --report
+      // has one to write to — accepting it for --out-dir or --pages would silently
+      // create a literal "./-" directory or hand "-" to the page-spec parser instead of
+      // refusing outright.
       const next = argv[i + 1];
-      if (VALUED.has(arg) && (next === undefined || (next.startsWith('-') && next !== '-'))) {
+      const bareDash = next === '-' && arg === '--report';
+      if (VALUED.has(arg) && (next === undefined || (next.startsWith('-') && !bareDash))) {
         throw new Error(`${arg} needs a value.`);
       }
 
@@ -75,6 +78,21 @@ function parseArgs(argv) {
     throw new Error(`Unknown --format "${args.format}". Use md, html, or both.`);
   }
   return args;
+}
+
+/**
+ * Write, then rename into place.
+ *
+ * A crash or a full disk mid-write leaves a truncated file sitting at the destination
+ * — and the next run's own overwrite guard (see warnIfForeign below) reads a half
+ * written file back as if it were a real, if odd, prior conversion. A rename within the
+ * same directory is a single filesystem operation: the destination is either the old
+ * content or the complete new content, never a partial write of either.
+ */
+function writeFileAtomic(destPath, content) {
+  const tmpPath = `${destPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  fs.renameSync(tmpPath, destPath);
 }
 
 async function toMarkdown(inputPath, pages = null) {
@@ -205,7 +223,7 @@ async function convert({
   if (format === 'md' || format === 'both') {
     const mdPath = path.join(dir, `${title}.md`);
     warnIfForeign(mdPath);
-    fs.writeFileSync(mdPath, markdown, 'utf8');
+    writeFileAtomic(mdPath, markdown);
     written.push(mdPath);
   }
 
@@ -214,7 +232,7 @@ async function convert({
   if (format === 'html' || format === 'both') {
     const htmlPath = path.join(dir, `${title}.html`);
     warnIfForeign(htmlPath);
-    fs.writeFileSync(htmlPath, html, 'utf8');
+    writeFileAtomic(htmlPath, html);
     written.push(htmlPath);
   }
 
@@ -232,7 +250,7 @@ async function convert({
     const json = JSON.stringify(reportJson(result, { source: path.basename(input) }), null, 2);
     if (toStdout) console.log(json);
     else {
-      fs.writeFileSync(reportPath, json, 'utf8');
+      writeFileAtomic(reportPath, json);
       say(`Report: ${reportPath}`);
     }
   }

@@ -175,7 +175,7 @@ function renderHtml(markdown, opts = {}) {
   content = slideNotesToAsides(content, dir);
 
   return `<!doctype html>
-<html dir="${dir}" lang="${lang}">
+<html dir="${dir}" lang="${escapeHtml(lang)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

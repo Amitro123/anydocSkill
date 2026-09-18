@@ -122,8 +122,57 @@ function writePptx(dir, { hebrew = true } = {}) {
     `<p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum"/></p:nvPr></p:nvSpPr>` +
     `<p:txBody><a:p><a:fld><a:t>2</a:t></a:fld></a:p></p:txBody></p:sp>` +
     `</p:spTree></p:cSld></p:notes>`));
+  // The link from a slide to its notes is this relationship, not the two filenames
+  // matching — a real deck always carries it, so a fixture with none would never
+  // exercise the path the extractor actually reads.
+  zip.addFile('ppt/slides/_rels/slide1.xml.rels', Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>` +
+    `</Relationships>`));
 
   const file = path.join(dir, hebrew ? 'deck.pptx' : 'deck-en.pptx');
+  zip.writeZip(file);
+  return file;
+}
+
+/**
+ * A deck where slide→notes numbering does not run 1:1 — slide 1's notes live in
+ * notesSlide9.xml, slide 2's in notesSlide3.xml. Real OOXML numbers the two part kinds
+ * independently; a deck that has been reordered or had a slide removed is exactly when
+ * they drift like this. Matching by filename number would either attach the wrong
+ * slide's notes or find nothing at all — silently, since both look like a normal read.
+ */
+function writeRenumberedNotesPptx(dir) {
+  const slide = (body, relId) =>
+    `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+    `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+    `<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+    `<p:txBody><a:p><a:r><a:t>${body}</a:t></a:r></a:p></p:txBody></p:sp>` +
+    `</p:spTree></p:cSld></p:sld>`;
+
+  const notes = body =>
+    `<?xml version="1.0"?><p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+    `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+    `<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>` +
+    `<p:txBody><a:p><a:r><a:t>${body}</a:t></a:r></a:p></p:txBody></p:sp>` +
+    `</p:spTree></p:cSld></p:notes>`;
+
+  const rels = target =>
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="${target}"/>` +
+    `</Relationships>`;
+
+  const zip = new AdmZip();
+  zip.addFile('ppt/slides/slide1.xml', Buffer.from(slide('שקופית ראשונה')));
+  zip.addFile('ppt/slides/slide2.xml', Buffer.from(slide('שקופית שנייה')));
+  zip.addFile('ppt/notesSlides/notesSlide9.xml', Buffer.from(notes('הערה על השקופית הראשונה')));
+  zip.addFile('ppt/notesSlides/notesSlide3.xml', Buffer.from(notes('הערה על השקופית השנייה')));
+  zip.addFile('ppt/slides/_rels/slide1.xml.rels', Buffer.from(rels('../notesSlides/notesSlide9.xml')));
+  zip.addFile('ppt/slides/_rels/slide2.xml.rels', Buffer.from(rels('../notesSlides/notesSlide3.xml')));
+
+  const file = path.join(dir, 'renumbered-notes.pptx');
   zip.writeZip(file);
   return file;
 }
@@ -737,6 +786,7 @@ function writeCorpus(dir) {
     writeOdt(dir),
     writeMixedScriptDoc(dir),
     writeScrambledScriptDoc(dir),
+    writeRenumberedNotesPptx(dir),
     ...writeMalformedFixtures(dir),
   ];
 }
@@ -747,4 +797,5 @@ module.exports = {
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
   writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf, writeMixedPdf,
   writeSizedHeadingsPdf, writeMalformedFixtures, writeMixedScriptDoc, writeScrambledScriptDoc,
+  writeRenumberedNotesPptx,
 };
