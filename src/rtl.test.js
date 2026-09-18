@@ -914,4 +914,81 @@ assert(geo.findGutter(marginNote) === null,
 assert(sequence(marginNote) === 'גוף-1|7|גוף-2|גוף-3',
   'a margin note stays where its y puts it');
 
+// Font-size-based heading recovery on the geometry path — the only structural signal
+// an untagged PDF gives, since this path never emits the `**bold**` markers
+// promoteHeadings (headings.js) works from in the first place.
+{
+  // A wide, shared width — like a real single-column page's lines — keeps findGutter
+  // from reading these as two columns, which is not what this block is testing.
+  const sized = (y, size, str) => [{ str, width: 400, transform: [0, 0, 0, size, 100, y] }];
+  const BODY = 10, HEAD = 14; // 1.4x — comfortably past HEADING_SIZE_RATIO (1.3)
+  const paragraphs = lines => geo.linesToParagraphs(lines);
+
+  const bodyLine = (y, label) => sized(y, BODY, `גוף ${label}.`);
+
+  // Isolated: body text on both sides is what tells a title from decoration.
+  const isolated = [
+    bodyLine(900, 1), bodyLine(880, 2),
+    sized(860, HEAD, 'כותרת מבודדת'),
+    bodyLine(840, 3), bodyLine(820, 4),
+  ];
+  assert(paragraphs(isolated).includes('## כותרת מבודדת'),
+    `an isolated large line promotes to a heading — got ${JSON.stringify(paragraphs(isolated))}`);
+
+  // Two consecutive large lines are a pull quote, not two headings — promoting either
+  // would invent a section break in the middle of one sentence.
+  const pullQuote = [
+    bodyLine(900, 1), bodyLine(880, 2),
+    sized(860, HEAD, 'ציטוט חלק ראשון'),
+    sized(840, HEAD, 'ציטוט חלק שני'),
+    bodyLine(820, 3), bodyLine(800, 4),
+  ];
+  const quoted = paragraphs(pullQuote);
+  assert(!quoted.some(b => b.startsWith('##')),
+    `a two-line run at heading size must not promote either line — got ${JSON.stringify(quoted)}`);
+  assert(quoted.join(' ').includes('ציטוט חלק ראשון') && quoted.join(' ').includes('ציטוט חלק שני'),
+    'and the text itself is not lost, only left as a paragraph');
+
+  // A page's first or last line has no neighbour on that side to check — treated as
+  // satisfied there, the same as a paragraph gap has nothing to compare against on a
+  // page's first line.
+  const atTop = [
+    sized(900, HEAD, 'כותרת בראש העמוד'),
+    bodyLine(880, 1), bodyLine(860, 2), bodyLine(840, 3), bodyLine(820, 4),
+  ];
+  assert(paragraphs(atTop)[0] === '## כותרת בראש העמוד',
+    `a heading with nothing above it still promotes — got ${JSON.stringify(paragraphs(atTop))}`);
+
+  const atBottom = [
+    bodyLine(900, 1), bodyLine(880, 2), bodyLine(860, 3), bodyLine(840, 4),
+    sized(820, HEAD, 'כותרת בתחתית העמוד'),
+  ];
+  assert(paragraphs(atBottom).at(-1) === '## כותרת בתחתית העמוד',
+    `a heading with nothing below it still promotes — got ${JSON.stringify(paragraphs(atBottom))}`);
+
+  // Under the ratio, a subheading close enough to body size to be genuinely
+  // ambiguous is left as body text rather than guessed at.
+  const borderline = [
+    bodyLine(900, 1), bodyLine(880, 2),
+    sized(860, 12, 'כותרת משנה גבולית'), // 1.2x — under HEADING_SIZE_RATIO
+    bodyLine(840, 3), bodyLine(820, 4),
+  ];
+  const nearMiss = paragraphs(borderline);
+  assert(!nearMiss.some(b => b.startsWith('##')),
+    `a line under the size ratio must not promote — got ${JSON.stringify(nearMiss)}`);
+  assert(nearMiss.join(' ').includes('כותרת משנה גבולית'), 'and its text still reaches the output');
+
+  // A large-font line that runs on at length is a styled paragraph, not a title.
+  const longLine = 'א'.repeat(100);
+  const asParagraph = [
+    bodyLine(900, 1), bodyLine(880, 2),
+    sized(860, HEAD, longLine),
+    bodyLine(840, 3), bodyLine(820, 4),
+  ];
+  const long = paragraphs(asParagraph);
+  assert(!long.some(b => b.startsWith('##')),
+    `a heading-sized line past the length cap must not promote — got ${JSON.stringify(long)}`);
+  assert(long.join(' ').includes(longLine), 'and its text still reaches the output');
+}
+
 console.log('All tests passed.');

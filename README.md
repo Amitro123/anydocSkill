@@ -348,17 +348,39 @@ losses, so you can see it was furniture.
 
 ## Headings a document never declared
 
-Most documents are formatted by hand: the section titles are bold body text, not real
-heading styles. No extractor can recover what the author never wrote, so the output
-would be one flat run of paragraphs with nothing to navigate by.
+Most documents are formatted by hand: the section titles are bold body text or simply
+set in a larger size, not real heading styles. No extractor can recover what the author
+never wrote, so the output would be one flat run of paragraphs with nothing to navigate
+by.
 
-A bold paragraph is therefore raised to `##` when it also looks like a title — under 80
+**A bold paragraph** is raised to `##` when it also looks like a title — under 80
 characters, not ending in `.`, `!` or `?`, and with body text underneath it. A bold
 sentence stays emphasis, and a bold sign-off at the end stays a sign-off. Documents that
 already contain real headings are left alone entirely: their author did use styles, so
 bold there is only ever emphasis.
 
-Marking the titles as Heading 1/2/3 in Word still beats the heuristic — do that where
+**On an untagged PDF, there is no bold to read** — the geometry path never emitted it,
+so the rule above had nothing to work from and every such PDF lost its structure
+outright. What it does have is font size, which this now reads directly: a line set at
+least 1.3x the page's typical size, with ordinary-sized text on both sides of it, is a
+title. The size on its own is not enough — a large pull quote spanning two or three
+lines looks identical to a two-line title from its font size alone, and promoting each
+of its lines would invent a section break in the middle of one sentence. Requiring
+ordinary text on *both* sides is what tells them apart: a title introduces body text and
+is introduced by it, a quote is large on every side of itself. The one real cost of
+that rule is a genuine heading sitting directly next to a large pull quote — those are
+left alone too, since nothing here can tell that shape apart from two decorative lines
+either. "Typical size" is weighted by how much text is set in it, not by line count: a
+page with as many heading-shaped short lines as body ones — a slide, a flyer — would
+otherwise measure its "typical" size from lines that carry hardly any of the page's
+actual text.
+
+Run against a real, untagged PDF — a hand-formatted, 19-page guide with no bold and no
+structure tags, headings marked only by size — this recovered 17 of its section titles;
+the two it left alone each sit directly beside a large pull quote and are exactly the
+shape the rule above declines to guess at.
+
+Marking the titles as Heading 1/2/3 in Word still beats either heuristic — do that where
 you can and this never has to guess.
 
 The reverse case is handled too. Extracted page text is read back as Markdown, so a line

@@ -15,6 +15,13 @@
 const PARAGRAPH_GAP_RATIO = 1.6;  // line gap beyond this multiple of the body gap starts a paragraph
 const SHORT_LINE_RATIO = 0.75;    // a line narrower than this fraction of the column ends a paragraph
 
+// A line this many times the page's typical font size is a heading candidate. Measured
+// against real documents: a genuine section title sits at 1.4x body size or higher, and
+// a subheading close enough to body size to be legitimately ambiguous — a 12pt aside next
+// to 11pt body — sits under 1.3x. The gap between those is where the line is drawn.
+const HEADING_SIZE_RATIO = 1.3;
+const MAX_HEADING_LENGTH = 80;    // longer than this is a large paragraph, not a title
+
 // pdfjs-dist ships glyph-width metrics for the 14 standard PDF fonts; pointing it there
 // is what stops it warning to stderr whenever a page references one it cannot otherwise
 // measure — harmless to the read itself, but noise worth not having.
@@ -156,6 +163,43 @@ function escapeBlockMarker(text) {
 
 function lineY(items) {
   return items[0].transform[5];
+}
+
+// The largest glyph on the line represents it, so one oversized initial or a stray
+// superscript pulls a line toward "heading" rather than a body line being pulled down
+// by a footnote marker — the direction a false positive is cheaper than a false negative.
+function lineFontSize(items) {
+  return Math.max(...items.map(i => Math.abs(i.transform[3]) || 0)) || 10;
+}
+
+/**
+ * The page's typical font size, weighted by how much text is set in it rather than by
+ * how many lines are.
+ *
+ * A heading is short by definition, so on a page carrying as many heading-shaped lines
+ * as body ones — a slide, a short flyer, this very fixture — a plain per-line median
+ * lands on the heading size instead: three one-word titles and three full sentences
+ * are six lines evenly split, but nowhere near an even split of the page's actual text.
+ * Weighting by character count is what keeps "typical" meaning what most of the words
+ * on the page are set in, which a line count alone does not.
+ */
+function medianFontSize(lines) {
+  const entries = lines
+    .map(line => ({
+      size: lineFontSize(line),
+      weight: line.reduce((n, item) => n + item.str.length, 0) || 1,
+    }))
+    .sort((a, b) => a.size - b.size);
+
+  const total = entries.reduce((n, e) => n + e.weight, 0);
+  if (!total) return 0;
+
+  let seen = 0;
+  for (const entry of entries) {
+    seen += entry.weight;
+    if (seen >= total / 2) return entry.size;
+  }
+  return entries.at(-1).size;
 }
 
 function lineLeft(items) {
@@ -310,11 +354,36 @@ function tableAt(lines, start, rtl) {
   return { end: start + rows.length, markdown };
 }
 
+/**
+ * Whether `lines[i]` is a standalone heading, by size and by isolation.
+ *
+ * Size alone overpromotes: a multi-line pull quote set in the same large type as a
+ * genuine title looks identical to one from a single line's font size alone, and
+ * promoting each of its lines invents section breaks in the middle of one sentence —
+ * this document's own front matter (`title / subtitle / author name`, three consecutive
+ * large lines) is exactly that shape. Requiring the line on both sides to be back at
+ * body size is what tells a title, which introduces body text and is introduced by it
+ * in turn, from a run of decorative type, which is large on every side of itself. A
+ * heading at the very top or bottom of a page has no neighbour on that side to check —
+ * treated as satisfied there, the same as a paragraph gap has nothing to compare
+ * against on a page's first line.
+ */
+function isHeadingLine(lines, i, bodySize) {
+  if (bodySize <= 0) return null;
+  const large = idx => idx >= 0 && idx < lines.length
+    && lineFontSize(lines[idx]) >= bodySize * HEADING_SIZE_RATIO;
+  if (!large(i) || large(i - 1) || large(i + 1)) return null;
+
+  const text = joinOneLine(lines[i]);
+  return text && text.length <= MAX_HEADING_LENGTH ? text : null;
+}
+
 function linesToParagraphs(rawLines) {
   const rtl = rawLines.some(l => HEBREW_OR_ARABIC.test(l.map(i => i.str).join('')));
   const lines = orderLines(rawLines, rtl);
   const body = medianGap(lines);
   const column = columnWidth(lines);
+  const bodySize = medianFontSize(lines);
   const paragraphs = [];
   let current = [];
 
@@ -329,6 +398,14 @@ function linesToParagraphs(rawLines) {
       flush();
       paragraphs.push(table.markdown);
       i = table.end;
+      continue;
+    }
+
+    const heading = isHeadingLine(lines, i, bodySize);
+    if (heading) {
+      flush();
+      paragraphs.push(`## ${heading}`);
+      i++;
       continue;
     }
 
@@ -519,5 +596,8 @@ module.exports = {
   repeatedFurniture,
   escapeBlockMarker,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines, dropFurnitureLines, tableAt, lineToCells },
+  _internals: {
+    joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines,
+    dropFurnitureLines, tableAt, lineToCells, isHeadingLine, lineFontSize, medianFontSize,
+  },
 };
