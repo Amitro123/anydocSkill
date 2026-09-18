@@ -1,7 +1,35 @@
 # anydoc-skill
 
-Claude Code skill that converts documents to Markdown and to a standalone HTML page,
-with correct right-to-left layout for Hebrew.
+### This is what lets your agent read Hebrew documents.
+
+Hand an agent a Hebrew PDF and it will usually hand you back nonsense. Most extractors
+return Hebrew in the order the glyphs were painted rather than the order they are read,
+which reverses every word — `רושיג` where the page says `גישור`. It still looks like
+Hebrew. It is unsearchable, unquotable, and wrong in a way nobody notices until the
+answer built on it is already wrong too.
+
+This is a Claude Code skill that converts documents — PDF, Word, PowerPoint, Excel and
+more — to Markdown and to a standalone HTML page, with the text in reading order, the
+direction right, and the structure a Hebrew document actually has:
+
+```bash
+node src/convert.js contract.pdf --verify
+```
+
+```
+Verified contract.pdf: 214 lines of page text.
+  No text lost, no number changed.
+```
+
+That last line is the point. An agent cannot tell a good extraction from a bad one by
+looking at it, and neither can you — so the conversion checks itself against the page it
+came from and says what it found. Where the text cannot be trusted it **refuses** rather
+than handing over something plausible.
+
+Written for Hebrew because Hebrew is where extraction breaks; everything here works the
+same on a document in any language.
+
+---
 
 Getting the words out of a document is the easy half. The half that goes wrong quietly
 is everything around them — a footer that vanishes, a table flattened into a sentence, a
