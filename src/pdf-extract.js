@@ -346,6 +346,12 @@ function linesToParagraphs(rawLines) {
 // furniture, and dropping it would delete the content.
 const MAX_REPEATED_SHARE = 0.5;
 
+// A header or footer is drawn once on a page, or twice where the same text is set at
+// both ends. A line drawn many times on one page is a column of a table repeating its
+// own values — a status, a currency, a debit/credit flag — and it looks identical to a
+// footer to anything counting pages alone. Dropping it takes a column of data with it.
+const MAX_PER_PAGE = 2;
+
 /**
  * The texts that repeat on every page and are page furniture rather than content.
  *
@@ -356,6 +362,10 @@ const MAX_REPEATED_SHARE = 0.5;
  * header is a small part of a page, so a repeated share that large is the signal to
  * keep everything.
  *
+ * It also stops meaning that within a single page. A table column whose cells hold the
+ * same short value on every row repeats as faithfully as any footer, so a line drawn
+ * more than MAX_PER_PAGE times on one page is read as content.
+ *
  * @param {string[][]} candidates - per page, the texts eligible to be furniture
  * @param {number[]} pageSizes - per page, how many blocks the page holds in total
  * @returns {Set<string>}
@@ -364,11 +374,19 @@ function repeatedFurniture(candidates, pageSizes) {
   if (candidates.length < 2) return new Set();
 
   const counts = new Map();
+  const crowded = new Set();
   for (const texts of candidates) {
-    for (const text of new Set(texts)) counts.set(text, (counts.get(text) || 0) + 1);
+    const onThisPage = new Map();
+    for (const text of texts) onThisPage.set(text, (onThisPage.get(text) || 0) + 1);
+    for (const [text, n] of onThisPage) {
+      counts.set(text, (counts.get(text) || 0) + 1);
+      if (n > MAX_PER_PAGE) crowded.add(text);
+    }
   }
   const furniture = new Set(
-    [...counts].filter(([, n]) => n === candidates.length).map(([text]) => text)
+    [...counts]
+      .filter(([text, n]) => n === candidates.length && !crowded.has(text))
+      .map(([text]) => text)
   );
 
   const total = pageSizes.reduce((a, b) => a + b, 0);
@@ -381,6 +399,29 @@ function repeatedFurniture(candidates, pageSizes) {
 function dropRepeatedLines(pages) {
   const furniture = repeatedFurniture(pages, pages.map(p => p.length));
   return pages.map(paragraphs => paragraphs.filter(text => !furniture.has(text)));
+}
+
+/**
+ * Drop page furniture while each line is still a line of its own.
+ *
+ * Furniture was matched against assembled paragraphs, which holds only while the header
+ * stays a paragraph by itself. Where the body starts close under it — a table continued
+ * across pages is the ordinary case — assembly joins the two first, the joined text
+ * matches no furniture string, and the header survives glued to the front of the first
+ * row of every page. Nothing is reported, because nothing was lost: one row per page is
+ * simply no longer where a reader, or a parser, looks for it.
+ *
+ * Matching lines catches it before it can merge. Paragraph-level matching stays for
+ * furniture that is a block rather than a line.
+ *
+ * @param {object[][][]} pageLines - per page, the text items grouped into lines
+ * @returns {object[][][]}
+ */
+function dropFurnitureLines(pageLines) {
+  const texts = pageLines.map(lines => lines.map(line => joinOneLine(line).trim()));
+  const furniture = repeatedFurniture(texts, texts.map(lines => lines.length));
+  if (!furniture.size) return pageLines;
+  return pageLines.map((lines, page) => lines.filter((_, i) => !furniture.has(texts[page][i])));
 }
 
 // Below this share of page text, the structure tree is not describing the whole
@@ -452,7 +493,8 @@ async function pdfToMarkdown(filePath, opts = {}) {
 
   // Marked-content markers carry no `str`, so the geometry path skips them the same way
   // it skips anything else without text.
-  const pages = read.map(({ items }) => linesToParagraphs(itemsToLines(items)));
+  const pages = dropFurnitureLines(read.map(({ items }) => itemsToLines(items)))
+    .map(linesToParagraphs);
 
   return dropRepeatedLines(pages)
     .map(paragraphs => paragraphs.join('\n\n'))
@@ -469,5 +511,5 @@ module.exports = {
   repeatedFurniture,
   escapeBlockMarker,
   isRtlText: str => HEBREW_OR_ARABIC.test(str),
-  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines, tableAt, lineToCells },
+  _internals: { joinOneLine, linesToParagraphs, orderLines, findGutter, dropRepeatedLines, dropFurnitureLines, tableAt, lineToCells },
 };

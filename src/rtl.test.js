@@ -358,6 +358,35 @@ assert([...repeatedFurniture(withFooter, sizes(withFooter))].join() === 'עתי�
 assert(!dropRepeatedLines(withFooter).flat().includes('עתיד האוטומציה'),
   'and must be dropped from the output');
 
+// A bank statement whose rows carry a debit/credit flag: the flag column holds the same
+// single character on most rows of every page, which counted per page is indistinguishable
+// from a footer. It is the only field saying which way the money went, and amounts on the
+// statement are unsigned, so dropping it makes a salary and a mortgage look alike.
+const flagged = [
+  ['תאריך פעולה חובה זכות יתרה',
+    'מסטרקרד 16.75', '2', 'מסטרקרד 209.01', '2', 'מסטרקרד 299.00', '2',
+    'משכורת 18,449.80', '1', 'קצבת ילדים 276.00', '1', 'זיכוי מלאומי 6,000.00', '1'],
+  ['תאריך פעולה חובה זכות יתרה',
+    'מקס 17.90', '2', 'הראל 410.71', '2', 'הוראת-קבע 7,900.00', '2',
+    'ביטוח לאומי 8,832.00', '1', 'העברה 1,200.00', '1', 'זיכוי בינלאומי 5,000.00', '1'],
+];
+const flaggedFurniture = repeatedFurniture(flagged, sizes(flagged));
+assert(!flaggedFurniture.has('2') && !flaggedFurniture.has('1'),
+  'a value repeated down a column of one page is content, however faithfully it repeats');
+assert(flaggedFurniture.has('תאריך פעולה חובה זכות יתרה'),
+  'while the column header above it is still furniture');
+assert(dropRepeatedLines(flagged).flat().filter(text => text === '2').length === 6,
+  'so every flag survives');
+
+// A header set at both the top and the bottom of each page is still furniture: twice is
+// how a page repeats its own title, not how a table repeats a cell.
+const twice = [
+  ['נספח א', 'פסקה ראשונה', 'עוד טקסט', 'רשימה', 'הערה', 'נספח א'],
+  ['נספח א', 'פסקה שנייה', 'סיכום', 'נספח', 'הפניה', 'נספח א'],
+];
+assert(repeatedFurniture(twice, sizes(twice)).has('נספח א'),
+  'a line repeated twice on a page is still furniture');
+
 // Two tickets from one order: the pages are copies of a template, so almost everything
 // repeats and almost none of it is furniture. Dropping it deleted both tickets.
 const tickets = [
