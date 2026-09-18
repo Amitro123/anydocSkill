@@ -84,7 +84,7 @@ function numberCounts(text) {
 }
 
 /**
- * Count glyphs the page draws that carry no character of their own.
+ * Read what a page paints: glyphs that carry no character, and images.
  *
  * Everything else here compares the extracted text against the rendered output, and
  * both of those come from the same text layer — so a glyph that never became a
@@ -100,18 +100,32 @@ function numberCounts(text) {
  * legal and office output — so this is quiet on healthy files. A font used purely for
  * icons would have unmapped glyphs by design; if that ever surfaces, this is the count
  * to loosen, and the report names it precisely rather than failing silently.
+ *
+ * Images are counted on the same pass, because they answer the neighbouring question
+ * for free: a page that draws one and yields no text is a picture of a page, and its
+ * words are not in the text layer for anything here to read or to miss.
  */
-function unmappedGlyphs(operatorList, OPS) {
+function readPage(operatorList, OPS) {
+  const paintsImage = new Set([
+    OPS.paintImageXObject, OPS.paintInlineImageXObject,
+    OPS.paintImageMaskXObject, OPS.paintJpegXObject,
+  ]);
+
   let unmapped = 0;
+  let images = 0;
+
   for (let i = 0; i < operatorList.fnArray.length; i++) {
-    if (operatorList.fnArray[i] !== OPS.showText) continue;
+    const op = operatorList.fnArray[i];
+    if (paintsImage.has(op)) { images++; continue; }
+    if (op !== OPS.showText) continue;
+
     for (const glyph of operatorList.argsArray[i][0] || []) {
       // A bare number is a positioning adjustment between glyphs, not a glyph.
       if (!glyph || typeof glyph === 'number') continue;
       if (!glyph.unicode || glyph.unicode === '�') unmapped++;
     }
   }
-  return unmapped;
+  return { unmapped, images };
 }
 
 async function pdfLines(filePath, wanted) {
@@ -120,12 +134,19 @@ async function pdfLines(filePath, wanted) {
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
 
   const pages = [];
+  const pictures = [];
   let undecoded = 0;
   for (let n = 1; n <= doc.numPages; n++) {
     if (wanted && !wanted.has(n)) continue;
     const page = await doc.getPage(n);
-    undecoded += unmappedGlyphs(await page.getOperatorList(), pdfjs.OPS);
+    const drawn = readPage(await page.getOperatorList(), pdfjs.OPS);
+    undecoded += drawn.unmapped;
     const { items } = await page.getTextContent();
+
+    // An image with no text beside it is a page this cannot read at all. Said plainly
+    // because it is the one case where OCR would do better, and where saying nothing
+    // reads as "there was nothing there".
+    if (drawn.images && !items.some(i => i.str.trim())) pictures.push(n);
 
     const lines = [];
     let line = [];
@@ -138,7 +159,7 @@ async function pdfLines(filePath, wanted) {
     pages.push(lines.map(joinOneLine).filter(Boolean));
   }
   await doc.cleanup();
-  return { pages, undecoded };
+  return { pages, undecoded, pictures };
 }
 
 /**
@@ -154,8 +175,8 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
   const fromPage = path.extname(inputPath).toLowerCase() === '.pdf';
   const read = fromPage
     ? await pdfLines(inputPath, wanted)
-    : { pages: [raw.split('\n').filter(line => !OWN_MARKUP.test(line))], undecoded: 0 };
-  const { pages, undecoded } = read;
+    : { pages: [raw.split('\n').filter(line => !OWN_MARKUP.test(line))], undecoded: 0, pictures: [] };
+  const { pages, undecoded, pictures } = read;
 
   const rendered = renderedText(html);
   const haystack = normalise(rendered);
@@ -208,7 +229,7 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     if (source !== output) renumbered.push({ value, source, output });
   }
 
-  return { missing, reordered, furniture, renumbered, undecoded, lines: seen.size, fromPage };
+  return { missing, reordered, furniture, renumbered, undecoded, pictures, lines: seen.size, fromPage };
 }
 
 const SHOWN = 8;
@@ -251,7 +272,18 @@ function report(result, { name }) {
     lines.push('    else here can see them. The page shows text this conversion does not hold.');
   }
 
-  if (passed(result)) lines.push('  No text lost, no number changed.');
+  if (result.pictures && result.pictures.length) {
+    const where = result.pictures.length > SHOWN
+      ? `${result.pictures.slice(0, SHOWN).join(', ')} and ${result.pictures.length - SHOWN} more`
+      : result.pictures.join(', ');
+    lines.push(`  PICTURE ONLY — page(s) ${where} draw an image and hold no text.`);
+    lines.push('    Their words are not in the text layer, so nothing here can read them');
+    lines.push('    or report them missing. OCR the document if those pages matter.');
+  }
+
+  // Vacuous where there was no text to lose, and actively misleading next to a page
+  // count that says every page was a picture.
+  if (passed(result) && result.lines) lines.push('  No text lost, no number changed.');
   return lines.join('\n');
 }
 
@@ -261,4 +293,4 @@ function report(result, { name }) {
 const passed = result =>
   !result.missing.length && !result.renumbered.length && !result.undecoded;
 
-module.exports = { verify, report, passed, _internals: { renderedText, numberCounts, normalise, unmappedGlyphs } };
+module.exports = { verify, report, passed, _internals: { renderedText, numberCounts, normalise, readPage } };
