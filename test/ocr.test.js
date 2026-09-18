@@ -32,6 +32,7 @@
 
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
@@ -41,6 +42,12 @@ const CLI = path.join(__dirname, '..', 'src', 'ocr.js');
 const FAKE_BIN = path.join(__dirname, 'fake-bin');
 const dir = fx.tempDir();
 process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+
+// scratchDir() names its directories this way, wherever the run lands — success,
+// refusal or a thrown error. A leak here is a full copy of whatever was just converted
+// left behind in the shared system temp directory, not this suite's own scratch space.
+const scratchDirs = () =>
+  fs.readdirSync(os.tmpdir()).filter(name => name.startsWith('anydoc-ocr-'));
 
 // Keyed by page number as a string, matching how JSON.stringify renders a plain object
 // with numeric keys — and how the stub reads --pages N back out of argv.
@@ -99,10 +106,13 @@ const mixed = () => fx.writeMixedPdf(dir, [PAGE1, null], `mixed-${Date.now()}-${
 {
   const doc = mixed();
   const out = path.join(dir, 'clean-out');
+  const before = scratchDirs().length;
   const result = run([doc, '--out-dir', out, '--format', 'md'],
     withFakeTools({ 2: 'OCR RECOVERED TEXT' }));
 
   assert.strictEqual(result.status, 0, `expected success: ${result.stderr}`);
+  assert.strictEqual(scratchDirs().length, before,
+    'a successful run must not leave its scratch directory behind in the system temp dir');
   assert(/OCR added a text layer to 1 page\(s\): 2/.test(result.stdout));
   assert(/guess, not a reading/.test(result.stdout), 'the OCR text is flagged as less certain');
 
@@ -136,6 +146,7 @@ const mixed = () => fx.writeMixedPdf(dir, [PAGE1, null], `mixed-${Date.now()}-${
 {
   const doc = mixed();
   const out = path.join(dir, 'ocr-fail-out');
+  const before = scratchDirs().length;
   const env = withFakeTools({ 2: 'irrelevant' });
   env.FAKE_OCR_FAIL = 'tesseract crashed';
   const result = run([doc, '--out-dir', out, '--format', 'md'], env);
@@ -143,6 +154,8 @@ const mixed = () => fx.writeMixedPdf(dir, [PAGE1, null], `mixed-${Date.now()}-${
   assert.strictEqual(result.status, 1);
   assert(/ocrmypdf failed/.test(result.stderr));
   assert(!fs.existsSync(out));
+  assert.strictEqual(scratchDirs().length, before,
+    'a thrown error must still clean up the scratch directory, not just a clean exit');
 }
 
 // --- Still unreadable: OCR ran and found nothing, which is a fact worth keeping, not

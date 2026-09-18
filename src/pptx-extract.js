@@ -7,6 +7,7 @@
  * emits a heading per slide, keeping speaker notes attached to their slide.
  */
 
+const path = require('path').posix;
 const AdmZip = require('adm-zip');
 const { rtlRatio } = require('./rtl');
 
@@ -58,6 +59,37 @@ function slideNumber(entryName) {
   return Number(entryName.match(/(\d+)\.xml$/)[1]);
 }
 
+const NOTES_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide';
+
+// A part's own filename says nothing about which notes belong to it — that link is a
+// relationship, not a naming convention. PowerPoint numbers slide and notesSlide parts
+// independently, so slide 1 pointing at notesSlide2.xml is valid OOXML, and a deck that
+// has been reordered or had a slide deleted is exactly when the two drift apart. Reading
+// the number back out of the filename would then attach the wrong notes to a slide, or
+// silently drop real notes because nothing by that number exists — either way, wrong and
+// invisible, since a generated fixture that only ever writes the two 1:1 can't catch it.
+function notesEntryFor(slideEntryName, byName, readXml) {
+  // ppt/slides/slideN.xml -> ppt/slides/_rels/slideN.xml.rels
+  const relsName = slideEntryName.replace(/^(.*\/)([^/]+)$/, '$1_rels/$2.rels');
+  const relsPart = byName(relsName);
+  if (!relsPart) return null;
+
+  const relationships = readXml(relsPart).match(/<Relationship\b[^>]*\/>/g) || [];
+  const notesRel = relationships.find(
+    rel => (rel.match(/\bType="([^"]*)"/) || [])[1] === NOTES_REL_TYPE);
+  const target = notesRel && (notesRel.match(/\bTarget="([^"]*)"/) || [])[1];
+  if (!target) return null;
+
+  // Targets are relative to the directory the referencing part sits in — "../notesSlides/
+  // notesSlide1.xml" resolves against ppt/slides/, not the package root — except when a
+  // producer writes an absolute one, which starts with "/" and is package-rooted already.
+  const resolved = target.startsWith('/')
+    ? target.slice(1)
+    : path.normalize(path.join(path.dirname(slideEntryName), target));
+
+  return byName(resolved);
+}
+
 /**
  * @param {string} filePath - Path to a .pptx
  * @param {object} [opts]
@@ -70,6 +102,7 @@ async function pptxToMarkdown(filePath, opts = {}) {
   const entries = zip.getEntries();
 
   const byName = name => entries.find(e => e.entryName === name);
+  const readXml = entry => zip.readAsText(entry);
 
   const slides = entries
     .filter(e => /^ppt\/slides\/slide\d+\.xml$/.test(e.entryName))
@@ -78,6 +111,7 @@ async function pptxToMarkdown(filePath, opts = {}) {
   // Labels depend on the deck's language, so read every slide before emitting any.
   const parsed = slides.map(slide => ({
     n: slideNumber(slide.entryName),
+    entryName: slide.entryName,
     paragraphs: xmlToParagraphs(zip.readAsText(slide)),
   }));
 
@@ -86,12 +120,12 @@ async function pptxToMarkdown(filePath, opts = {}) {
 
   const sections = [];
 
-  for (const { n, paragraphs } of parsed) {
+  for (const { n, entryName, paragraphs } of parsed) {
     const section = [`## ${labels.slide(n)}`];
     section.push(paragraphs.length ? paragraphs.join('\n\n') : labels.empty);
 
     if (includeNotes) {
-      const notesPart = byName(`ppt/notesSlides/notesSlide${n}.xml`);
+      const notesPart = notesEntryFor(entryName, byName, readXml);
       if (notesPart) {
         const notes = xmlToParagraphs(zip.readAsText(notesPart));
         // The marker carries the slide number in a machine-readable form: the
@@ -109,4 +143,6 @@ async function pptxToMarkdown(filePath, opts = {}) {
   return sections.join('\n\n') + '\n';
 }
 
-module.exports = { pptxToMarkdown, _internals: { xmlToParagraphs, stripFurniture, LABELS } };
+module.exports = {
+  pptxToMarkdown, _internals: { xmlToParagraphs, stripFurniture, LABELS, notesEntryFor },
+};

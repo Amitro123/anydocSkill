@@ -89,6 +89,24 @@ function requireTools(lang) {
 }
 
 /**
+ * A clean exit is not a promise the report is readable — convert.js writes its outputs
+ * before the report, and a run killed in between (disk full, OOM) can still report 0
+ * or 3. A bare JSON.parse would hand the caller a SyntaxError pointing at a file path
+ * and nothing else; this says which file, and that it was this tool's own read that
+ * failed, not anydoc's conversion.
+ */
+function readReport(reportPath, exitStatus) {
+  try {
+    return JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  } catch (err) {
+    throw new Error(
+      `anydoc exited ${exitStatus} but its --report at ${reportPath} could not be ` +
+      `read (${err.message}).`
+    );
+  }
+}
+
+/**
  * Run anydoc's own convert.js and read back the JSON --report it writes, treating exit
  * 3 (findings, but the files were written) as success and anything else as a real
  * failure this cannot route around.
@@ -100,10 +118,7 @@ function convert(args, reportPath) {
     throw Object.assign(new Error((result.stderr || result.stdout || '').trim()
       || `anydoc exited ${result.status}`), { exitCode: result.status });
   }
-  return {
-    stdout: result.stdout,
-    report: JSON.parse(fs.readFileSync(reportPath, 'utf8')),
-  };
+  return { stdout: result.stdout, report: readReport(reportPath, result.status) };
 }
 
 function scratchDir() {
@@ -164,107 +179,115 @@ async function run({ input, outDir, lang, format }) {
   const title = path.basename(input, path.extname(input));
   const work = scratchDir();
 
-  // A first pass purely to see what anydoc makes of the document as it is. --force is
-  // needed here specifically: a fully-scanned PDF has no text at all, and convert.js
-  // refuses that outright rather than writing an empty file — which is exactly the
-  // refusal this tool exists to work around, so it has to see past it to read the report.
-  const before = convert(
-    [input, '--format', 'md', '--out-dir', work, '--force', '--verify'],
-    path.join(work, 'before.json'));
+  // Everything below reads and writes only inside `work` until the final copy into the
+  // caller's own directory — including the input documents themselves, once OCR'd, and
+  // on every early return or thrown error alike. Left behind, `work` is a full copy of
+  // whatever was just converted sitting in /tmp indefinitely.
+  try {
+    // A first pass purely to see what anydoc makes of the document as it is. --force is
+    // needed here specifically: a fully-scanned PDF has no text at all, and convert.js
+    // refuses that outright rather than writing an empty file — which is exactly the
+    // refusal this tool exists to work around, so it has to see past it to read the report.
+    const before = convert(
+      [input, '--format', 'md', '--out-dir', work, '--force', '--verify'],
+      path.join(work, 'before.json'));
 
-  const pictureOnly = before.report.pictureOnly;
-  const illustrated = [...new Set((before.report.illustrations || []).map(i => i.page))];
+    const pictureOnly = before.report.pictureOnly;
+    const illustrated = [...new Set((before.report.illustrations || []).map(i => i.page))];
 
-  if (!pictureOnly.length) {
-    if (illustrated.length) {
-      console.log(
-        `Nothing here for OCR to safely do. Page(s) ${illustrated.join(', ')} carry a ` +
-        `large image, but they already have a text layer — OCR-ing them would mean ` +
-        `redoing the whole page and risking the text that already reads correctly, ` +
-        `which this refuses to do. Read those pages directly if they matter.\n\n` +
-        `Run anydoc on ${path.basename(input)} directly; it already reads everything ` +
-        `this tool would otherwise add.`
-      );
-    } else {
-      console.log(
-        `Nothing here for OCR to do — anydoc already read every page of ` +
-        `${path.basename(input)}. Run it directly; there is nothing this adds.`
-      );
+    if (!pictureOnly.length) {
+      if (illustrated.length) {
+        console.log(
+          `Nothing here for OCR to safely do. Page(s) ${illustrated.join(', ')} carry a ` +
+          `large image, but they already have a text layer — OCR-ing them would mean ` +
+          `redoing the whole page and risking the text that already reads correctly, ` +
+          `which this refuses to do. Read those pages directly if they matter.\n\n` +
+          `Run anydoc on ${path.basename(input)} directly; it already reads everything ` +
+          `this tool would otherwise add.`
+        );
+      } else {
+        console.log(
+          `Nothing here for OCR to do — anydoc already read every page of ` +
+          `${path.basename(input)}. Run it directly; there is nothing this adds.`
+        );
+      }
+      return;
     }
-    return;
+
+    // Only checked now: nothing above needed ocrmypdf, and a document with nothing to
+    // OCR should never fail here for a tool it was never going to call.
+    requireTools(lang);
+
+    console.log(
+      `Page(s) ${pictureOnly.join(', ')} have no text layer. Running OCR on ` +
+      `${pictureOnly.length === 1 ? 'that page' : 'those pages'} only (${lang}) — every ` +
+      `other page is left exactly as anydoc already read it.`
+    );
+
+    const sizes = await pageSizes(input, pictureOnly);
+    const transcripts = pictureOnly.map(page => ({
+      ...sizes.get(page),
+      text: ocrPage(input, page, lang, work),
+    }));
+
+    const { buildCorrectedPdf, assembleFinalPdf } = require('./ocr-pdf');
+    const correctedBytes = await buildCorrectedPdf(transcripts);
+    const finalBytes = await assembleFinalPdf(input, correctedBytes, pictureOnly);
+    const finalPdf = path.join(work, `${title}.pdf`);
+    fs.writeFileSync(finalPdf, finalBytes);
+
+    // The second read, over the assembled document — every page anydoc already read
+    // untouched, the recovered pages holding exactly their own transcript — through
+    // exactly the same checks as any other conversion.
+    const afterDir = path.join(work, 'after');
+    const after = convert(
+      [finalPdf, '--format', format, '--out-dir', afterDir, '--verify'],
+      path.join(work, 'after.json'));
+
+    const { reconcile, reconcileReport } = require('./reconcile');
+    const result = reconcile(before.report, after.report);
+
+    if (!result.ok) {
+      console.error(reconcileReport(result));
+      throw Object.assign(new Error(
+        `Refusing to write output — OCR changed something it should not have. ` +
+        `${path.basename(input)} was not touched; run anydoc on it directly if you want ` +
+        `the unenriched conversion.`
+      ), { exitCode: EXIT_REFUSED });
+    }
+
+    // Only now, with the result checked, does anything land in the caller's own
+    // directory — a failed reconciliation above must leave it exactly as it was.
+    const dest = outDir || path.dirname(input);
+    fs.mkdirSync(dest, { recursive: true });
+    for (const name of fs.readdirSync(afterDir)) {
+      fs.copyFileSync(path.join(afterDir, name), path.join(dest, name));
+      console.log(`Written: ${path.join(dest, name)}`);
+    }
+
+    // anydoc's own report and rendered output say nothing about where any given page's
+    // text came from — that question does not exist for anything anydoc reads itself, and
+    // teaching its schema to answer it would be scope this tool has no business adding.
+    // This is that answer, kept in this tool's own report, next to anydoc's.
+    const ocrReport = {
+      schema: 1,
+      tool: 'anydoc-ocr',
+      version: require('../package.json').version,
+      source: path.basename(input),
+      lang,
+      ocrPassed: pictureOnly,
+      recovered: result.recovered,
+      stillUnreadable: result.stillUnreadable,
+      provenance: result.provenance,
+    };
+    const jsonPath = path.join(dest, `${title}.ocr-report.json`);
+    fs.writeFileSync(jsonPath, JSON.stringify(ocrReport, null, 2), 'utf8');
+    console.log(`Written: ${jsonPath}`);
+
+    console.log('\n' + reconcileReport(result));
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
   }
-
-  // Only checked now: nothing above needed ocrmypdf, and a document with nothing to
-  // OCR should never fail here for a tool it was never going to call.
-  requireTools(lang);
-
-  console.log(
-    `Page(s) ${pictureOnly.join(', ')} have no text layer. Running OCR on ` +
-    `${pictureOnly.length === 1 ? 'that page' : 'those pages'} only (${lang}) — every ` +
-    `other page is left exactly as anydoc already read it.`
-  );
-
-  const sizes = await pageSizes(input, pictureOnly);
-  const transcripts = pictureOnly.map(page => ({
-    ...sizes.get(page),
-    text: ocrPage(input, page, lang, work),
-  }));
-
-  const { buildCorrectedPdf, assembleFinalPdf } = require('./ocr-pdf');
-  const correctedBytes = await buildCorrectedPdf(transcripts);
-  const finalBytes = await assembleFinalPdf(input, correctedBytes, pictureOnly);
-  const finalPdf = path.join(work, `${title}.pdf`);
-  fs.writeFileSync(finalPdf, finalBytes);
-
-  // The second read, over the assembled document — every page anydoc already read
-  // untouched, the recovered pages holding exactly their own transcript — through
-  // exactly the same checks as any other conversion.
-  const afterDir = path.join(work, 'after');
-  const after = convert(
-    [finalPdf, '--format', format, '--out-dir', afterDir, '--verify'],
-    path.join(work, 'after.json'));
-
-  const { reconcile, reconcileReport } = require('./reconcile');
-  const result = reconcile(before.report, after.report);
-
-  if (!result.ok) {
-    console.error(reconcileReport(result));
-    throw Object.assign(new Error(
-      `Refusing to write output — OCR changed something it should not have. ` +
-      `${path.basename(input)} was not touched; run anydoc on it directly if you want ` +
-      `the unenriched conversion.`
-    ), { exitCode: EXIT_REFUSED });
-  }
-
-  // Only now, with the result checked, does anything land in the caller's own
-  // directory — a failed reconciliation above must leave it exactly as it was.
-  const dest = outDir || path.dirname(input);
-  fs.mkdirSync(dest, { recursive: true });
-  for (const name of fs.readdirSync(afterDir)) {
-    fs.copyFileSync(path.join(afterDir, name), path.join(dest, name));
-    console.log(`Written: ${path.join(dest, name)}`);
-  }
-
-  // anydoc's own report and rendered output say nothing about where any given page's
-  // text came from — that question does not exist for anything anydoc reads itself, and
-  // teaching its schema to answer it would be scope this tool has no business adding.
-  // This is that answer, kept in this tool's own report, next to anydoc's.
-  const ocrReport = {
-    schema: 1,
-    tool: 'anydoc-ocr',
-    version: require('../package.json').version,
-    source: path.basename(input),
-    lang,
-    ocrPassed: pictureOnly,
-    recovered: result.recovered,
-    stillUnreadable: result.stillUnreadable,
-    provenance: result.provenance,
-  };
-  const jsonPath = path.join(dest, `${title}.ocr-report.json`);
-  fs.writeFileSync(jsonPath, JSON.stringify(ocrReport, null, 2), 'utf8');
-  console.log(`Written: ${jsonPath}`);
-
-  console.log('\n' + reconcileReport(result));
 }
 
 if (require.main === module) {
@@ -286,4 +309,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, requireTools };
+module.exports = { run, requireTools, _internals: { convert, readReport } };

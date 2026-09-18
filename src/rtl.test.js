@@ -188,6 +188,16 @@ assert(!/<script|<img/i.test(hostileHtml.match(/<main>([\s\S]*)<\/main>/)[1]),
   'raw HTML in the source must reach the page as text, never as markup');
 assert(hostileHtml.includes('&lt;script&gt;'), 'and is escaped rather than dropped');
 
+// renderHtml is a public export, so it has to hold against front matter it did not
+// generate itself, not only against what addRtlSupport ever writes — title and source
+// were already escaped, lang was not.
+const hostileLangHtml = renderHtml(
+  '---\ndir: rtl\nlang: he" onload="alert(1)\n---\n\nגוף\n');
+assert(!/onload="/.test(hostileLangHtml),
+  'a hostile lang value must not break out of the attribute with a live onload=" handler');
+assert(hostileLangHtml.includes('lang="he&quot; onload=&quot;alert(1)"'),
+  'and reaches the page escaped, exactly like title and source');
+
 // detectDocumentLanguage — a bilingual deck is still Hebrew, not "und"
 const bilingual = 'מבנה ארגוני טכנולוגיות מנהלת פיתוח מנהל תשתיות Head of BI מובילי AI עופר נאור';
 const bi = detectDocumentLanguage(bilingual);
@@ -304,6 +314,47 @@ assert(!/<blockquote>[\s\S]*הערות דובר/.test(notesHtml), 'the blockquot
 const { _internals: pptxInternals } = require('./pptx-extract');
 assert(pptxInternals.LABELS.en.slide(3) === 'Slide 3', 'English decks use English labels');
 assert(pptxInternals.LABELS.he.slide(3) === 'שקופית 3', 'Hebrew decks keep Hebrew labels');
+
+// notesEntryFor — a slide's notes are found through its relationship, never by
+// assuming notesSlideN.xml matches slideN.xml, since OOXML numbers the two kinds of
+// part independently and a reordered or edited deck is exactly when they diverge.
+{
+  const relsXml = target =>
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>` +
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="${target}"/>` +
+    `</Relationships>`;
+
+  const parts = new Map([
+    ['ppt/slides/_rels/slide1.xml.rels', relsXml('../notesSlides/notesSlide9.xml')],
+    ['ppt/notesSlides/notesSlide9.xml', '<p:notes/>'],
+    // No .rels for slide2 at all — a deck with no notes for a slide carries none.
+  ]);
+  const byName = name => (parts.has(name) ? { entryName: name } : undefined);
+  const readXml = entry => parts.get(entry.entryName);
+
+  assert.strictEqual(
+    pptxInternals.notesEntryFor('ppt/slides/slide1.xml', byName, readXml).entryName,
+    'ppt/notesSlides/notesSlide9.xml',
+    'the relationship is followed to whichever notesSlide it names, not slide1\'s own number');
+
+  assert.strictEqual(pptxInternals.notesEntryFor('ppt/slides/slide2.xml', byName, readXml), null,
+    'a slide with no relationships part has no notes, rather than guessing at a filename');
+
+  // A relationship whose Target is absolute (leading "/") is package-rooted already,
+  // not relative to ppt/slides/ — resolving it the relative way would look in
+  // ppt/slides/ppt/notesSlides/... and find nothing.
+  const absolute = new Map([
+    ['ppt/slides/_rels/slide1.xml.rels', relsXml('/ppt/notesSlides/notesSlide1.xml')],
+    ['ppt/notesSlides/notesSlide1.xml', '<p:notes/>'],
+  ]);
+  const byNameAbs = name => (absolute.has(name) ? { entryName: name } : undefined);
+  const readXmlAbs = entry => absolute.get(entry.entryName);
+  assert.strictEqual(
+    pptxInternals.notesEntryFor('ppt/slides/slide1.xml', byNameAbs, readXmlAbs).entryName,
+    'ppt/notesSlides/notesSlide1.xml', 'an absolute Target is read from the package root');
+}
 
 // An RTL line must be ordered by position, not by the order the producer emitted it.
 // Word writes such a line right-to-left; other tools write it left-to-right, and
@@ -553,6 +604,35 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
     'a page this never asked ocrmypdf to touch yields nothing, not a stray bracket');
   assert.strictEqual(parseSidecar('\f\f'), '',
     'OCR running and finding literally nothing is an empty transcript, not an error');
+}
+
+// readReport — a clean exit from convert.js is not a promise its --report file is
+// readable; a run killed between writing its outputs and writing the report can still
+// exit 0 or 3, and the caller should get a described failure, not a bare SyntaxError.
+{
+  const { readReport } = require('./ocr')._internals;
+  const os = require('os');
+  const fs = require('fs');
+  const path = require('path');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anydoc-readreport-'));
+  const good = path.join(dir, 'good.json');
+  fs.writeFileSync(good, JSON.stringify({ schema: 1, passed: true }));
+  assert.deepStrictEqual(readReport(good, 0), { schema: 1, passed: true },
+    'a well-formed report reads through untouched');
+
+  const missing = path.join(dir, 'missing.json');
+  assert.throws(() => readReport(missing, 0),
+    /anydoc exited 0 but its --report at .*missing\.json could not be read/,
+    'a missing report names the path and the exit status it was trusting, not a raw ENOENT');
+
+  const truncated = path.join(dir, 'truncated.json');
+  fs.writeFileSync(truncated, '{"schema": 1, "pas');
+  assert.throws(() => readReport(truncated, 3),
+    /anydoc exited 3 but its --report at .*truncated\.json could not be read/,
+    'a truncated report is described the same way, not left as a SyntaxError pointing at nothing');
+
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // reconcile() decides what an OCR pass over anydoc's own output was and was not
