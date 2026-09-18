@@ -451,10 +451,11 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
     `but the report names it with its size — got:\n${said}`);
 }
 
-// The OCR companion's own argument parsing and its ocrmypdf invocation, both kept in
-// src/ocr-args.js purely so this can check them without ocrmypdf installed.
+// The OCR companion's own argument parsing, its per-page ocrmypdf invocation, and the
+// --sidecar transcript parser, all kept in src/ocr-args.js purely so this can check
+// them without ocrmypdf installed.
 {
-  const { parseArgs, pageListArg, buildOcrArgs } = require('./ocr-args');
+  const { parseArgs, buildSidecarOcrArgs, parseSidecar } = require('./ocr-args');
 
   const args = parseArgs(['doc.pdf', '--lang', 'heb+eng', '--out-dir', 'out']);
   assert.strictEqual(args.input, 'doc.pdf');
@@ -468,15 +469,29 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   assert.throws(() => parseArgs(['a.pdf', 'b.pdf']), /Only one input file/);
   assert.throws(() => parseArgs(['doc.pdf', '--format', 'pdf']), /Unknown --format/);
 
-  assert.strictEqual(pageListArg([3, 7, 9]), '3,7,9');
-
-  const argv = buildOcrArgs('in.pdf', 'out.pdf', [3, 7], 'heb+eng');
+  const argv = buildSidecarOcrArgs('in.pdf', 'out.pdf', 'side.txt', 7, 'heb+eng');
   assert(argv.includes('--skip-text'), 'a page that turns out to have text is still left alone');
-  assert.deepStrictEqual(argv.slice(argv.indexOf('--pages') + 1, argv.indexOf('--pages') + 2), ['3,7'],
-    'restricted to exactly the pages named, not the whole document');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--pages') + 1, argv.indexOf('--pages') + 2), ['7'],
+    'restricted to exactly the one page asked for');
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--sidecar') + 1, argv.indexOf('--sidecar') + 2), ['side.txt']);
   assert.deepStrictEqual(argv.slice(argv.indexOf('-l') + 1, argv.indexOf('-l') + 2), ['heb+eng']);
   assert(argv[argv.length - 2] === 'in.pdf' && argv[argv.length - 1] === 'out.pdf',
     'input and output are positional and last, as ocrmypdf expects');
+
+  // parseSidecar: real ocrmypdf output, restricted to one page, is one real transcript
+  // chunk plus a skip placeholder for whatever else the run saw.
+  assert.strictEqual(
+    parseSidecar('עולה לגן\nשל גדולים\n\n\f[OCR skipped on page(s) 2-8]'),
+    'עולה לגן\nשל גדולים',
+    'the transcript survives, the skip placeholder does not');
+  assert.strictEqual(
+    parseSidecar('[OCR skipped on page(s) 1-4]\fאני אכיר הרבה חברים\n\n\f[OCR skipped on page(s) 6-8]'),
+    'אני אכיר הרבה חברים',
+    'a placeholder on either side of the real chunk is still dropped');
+  assert.strictEqual(parseSidecar('[OCR skipped on page(s) 1-8]'), '',
+    'a page this never asked ocrmypdf to touch yields nothing, not a stray bracket');
+  assert.strictEqual(parseSidecar('\f\f'), '',
+    'OCR running and finding literally nothing is an empty transcript, not an error');
 }
 
 // reconcile() decides what an OCR pass over anydoc's own output was and was not
@@ -484,7 +499,9 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
 {
   const { reconcile, reconcileReport } = require('./reconcile');
 
-  const page = (number, digest, picture = false) => ({ page: number, digest, picture });
+  // `lines` mirrors --report's own field: how many lines of text a page holds, which
+  // is the one signal reconcile() actually reads to tell recovered from unreadable.
+  const page = (number, digest, lines = 1) => ({ page: number, digest, lines });
   const report = (pages, pictureOnly = []) => ({
     totals: { pages: pages.length },
     pictureOnly,
@@ -494,10 +511,10 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   // The ordinary case: OCR filled in the pages it was asked to and left the rest alone.
   {
     const before = report(
-      [page(1, 'aaa'), page(2, 'bbb', true), page(3, 'ccc')],
+      [page(1, 'aaa'), page(2, 'bbb'), page(3, 'ccc')],
       [2]);
     const after = report(
-      [page(1, 'aaa'), page(2, 'new-text', false), page(3, 'ccc')],
+      [page(1, 'aaa'), page(2, 'new-text', 3), page(3, 'ccc')],
       []);
 
     const result = reconcile(before, after);
@@ -512,8 +529,8 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   // OCR found nothing either. Not a failure of the check — the page is exactly as
   // unreadable as it was, which is a fact worth keeping rather than an error.
   {
-    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
-    const after = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
+    const before = report([page(1, 'aaa'), page(2, 'bbb')], [2]);
+    const after = report([page(1, 'aaa'), page(2, 'bbb', 0)], [2]);
 
     const result = reconcile(before, after);
     assert(result.ok, 'OCR finding nothing still reconciles cleanly');
@@ -525,8 +542,8 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   // with a different one. --skip-text and --pages are supposed to make this impossible;
   // this is what actually checks that they did.
   {
-    const before = report([page(1, 'aaa'), page(2, 'bbb', true)], [2]);
-    const after = report([page(1, 'DIFFERENT'), page(2, 'bbb', true)], [2]);
+    const before = report([page(1, 'aaa'), page(2, 'bbb')], [2]);
+    const after = report([page(1, 'DIFFERENT'), page(2, 'bbb')], [2]);
 
     const result = reconcile(before, after);
     assert(!result.ok, 'a page that had text and changed anyway must fail reconciliation');
@@ -560,12 +577,27 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
     assert(result.unexpectedChanges.some(c => c.page === 2 && /not in the original/.test(c.reason)));
   }
 
+  // A page an OCR pass built from scratch and found nothing for draws no image at
+  // all — there is no scan to be a picture of, just an empty page — so verify.js's
+  // `picture` flag never fires for it however unreadable it stayed. This is the case
+  // that flag alone would have missed and reported as recovered.
+  {
+    const before = report([page(1, 'aaa'), page(2, 'bbb')], [2]);
+    const after = report([page(1, 'aaa'), page(2, '', 0)], [2]);
+
+    const result = reconcile(before, after);
+    assert(result.ok, 'an empty result still reconciles — OCR finding nothing is not a failure');
+    assert.deepStrictEqual(result.stillUnreadable, [2],
+      'a page with zero lines must be unreadable regardless of whether anything drew as a picture');
+    assert.deepStrictEqual(result.recovered, []);
+  }
+
   // The report is prose, and has to say the two things that matter: what changed and
   // whether the result is usable.
   {
     const clean = reconcile(
-      report([page(1, 'aaa'), page(2, 'bbb', true)], [2]),
-      report([page(1, 'aaa'), page(2, 'new', false)], []));
+      report([page(1, 'aaa'), page(2, 'bbb')], [2]),
+      report([page(1, 'aaa'), page(2, 'new', 2)], []));
     const said = reconcileReport(clean);
     assert(/OCR added a text layer to 1 page\(s\): 2/.test(said), `got: ${said}`);
     assert(/guess, not a reading/.test(said));

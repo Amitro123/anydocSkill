@@ -12,13 +12,17 @@
  * the prose and the JSON this writes alongside anydoc's own output.
  *
  * What this refuses to do is the more important half. OCR only ever runs on the pages
- * anydoc's own --report already named PICTURE ONLY, restricted there by ocrmypdf's own
- * --pages and --skip-text (see src/ocr-args.js), and the result is checked again
- * afterwards — see src/reconcile.js — before anything is written to the real output
- * directory. A page that already had a text layer must come back with the exact same
- * one, or nothing here is written at all. Re-guessing a page that was already read
- * correctly is the failure this whole project exists to catch, and this tool is not
- * exempt from that just because it is the one calling OCR.
+ * anydoc's own --report already named PICTURE ONLY, one page at a time, restricted
+ * there by ocrmypdf's own --pages and --skip-text (see src/ocr-args.js). ocrmypdf's own
+ * output PDF is never read for its text — its embedded OCR text layer is exactly what
+ * came back character-reversed on a real Hebrew scan tested against this, where its
+ * plain --sidecar transcript did not, so the transcript is what gets used, drawn onto a
+ * fresh page of this project's own making (src/ocr-pdf.js) rather than trusted as-is.
+ * The result is checked again afterwards — see src/reconcile.js — before anything is
+ * written to the real output directory: a page that already had a text layer must come
+ * back with the exact same one, or nothing here is written at all. Re-guessing a page
+ * that was already read correctly is the failure this whole project exists to catch,
+ * and this tool is not exempt from that just because it is the one calling OCR.
  *
  * Usage:
  *   node src/ocr.js <input.pdf> [--out-dir <dir>] [--lang heb+eng] [--format md|html|both]
@@ -38,7 +42,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
-const { parseArgs, buildOcrArgs } = require('./ocr-args');
+const { parseArgs, buildSidecarOcrArgs, parseSidecar } = require('./ocr-args');
 
 const CONVERT = path.join(__dirname, 'convert.js');
 
@@ -106,6 +110,47 @@ function scratchDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'anydoc-ocr-'));
 }
 
+/**
+ * The width and height of specific pages, read from the document itself.
+ *
+ * The corrected page built to replace one has to be the same size as the page it
+ * replaces — not for anything this tool checks, but for anyone who opens the result
+ * afterwards, where a page that suddenly changes size mid-document reads as damage.
+ */
+async function pageSizes(inputPath, pages) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ url: inputPath }).promise;
+  const sizes = new Map();
+  for (const n of pages) {
+    const page = await doc.getPage(n);
+    const [x0, y0, x1, y1] = page.view;
+    sizes.set(n, { width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) });
+  }
+  await doc.cleanup();
+  return sizes;
+}
+
+/**
+ * OCR one page and return its transcript, or '' if ocrmypdf found nothing on it.
+ *
+ * One invocation per page rather than one restricted to the whole set — see
+ * buildSidecarOcrArgs's own comment for why the --sidecar format makes that the
+ * simpler, not the slower, choice here.
+ */
+function ocrPage(inputPath, page, lang, work) {
+  const throwaway = path.join(work, `p${page}.pdf`);
+  const sidecar = path.join(work, `p${page}.sidecar.txt`);
+  const result = spawnSync('ocrmypdf', buildSidecarOcrArgs(inputPath, throwaway, sidecar, page, lang),
+    { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(
+      `ocrmypdf failed on page ${page} (exit ${result.status}):\n\n` +
+      `${(result.stderr || result.stdout || '').trim()}`
+    );
+  }
+  return parseSidecar(fs.readFileSync(sidecar, 'utf8'));
+}
+
 async function run({ input, outDir, lang, format }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
   if (path.extname(input).toLowerCase() !== '.pdf') {
@@ -159,19 +204,24 @@ async function run({ input, outDir, lang, format }) {
     `other page is left exactly as anydoc already read it.`
   );
 
-  const ocrPdf = path.join(work, `${title}.pdf`);
-  const ocrRun = spawnSync('ocrmypdf', buildOcrArgs(input, ocrPdf, pictureOnly, lang),
-    { encoding: 'utf8' });
-  if (ocrRun.status !== 0) {
-    throw new Error(
-      `ocrmypdf failed (exit ${ocrRun.status}):\n\n${(ocrRun.stderr || ocrRun.stdout || '').trim()}`
-    );
-  }
+  const sizes = await pageSizes(input, pictureOnly);
+  const transcripts = pictureOnly.map(page => ({
+    ...sizes.get(page),
+    text: ocrPage(input, page, lang, work),
+  }));
 
-  // The second read, over exactly the same page set, through exactly the same checks.
+  const { buildCorrectedPdf, assembleFinalPdf } = require('./ocr-pdf');
+  const correctedBytes = await buildCorrectedPdf(transcripts);
+  const finalBytes = await assembleFinalPdf(input, correctedBytes, pictureOnly);
+  const finalPdf = path.join(work, `${title}.pdf`);
+  fs.writeFileSync(finalPdf, finalBytes);
+
+  // The second read, over the assembled document — every page anydoc already read
+  // untouched, the recovered pages holding exactly their own transcript — through
+  // exactly the same checks as any other conversion.
   const afterDir = path.join(work, 'after');
   const after = convert(
-    [ocrPdf, '--format', format, '--out-dir', afterDir, '--verify'],
+    [finalPdf, '--format', format, '--out-dir', afterDir, '--verify'],
     path.join(work, 'after.json'));
 
   const { reconcile, reconcileReport } = require('./reconcile');
