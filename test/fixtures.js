@@ -295,6 +295,23 @@ const writeInvoicePdf = dir => writeLaidOutPdf(dir, [[
 ]], 'invoice');
 
 /**
+ * A statement whose table runs across pages: the column header repeats at the top of
+ * every page, and the first row sits directly under it at the body's own line spacing.
+ *
+ * This is the shape that used to glue the header onto the front of the first row of
+ * each page. Paragraph assembly joined the two before furniture matching ever saw the
+ * header as a line of its own, so it matched nothing and survived.
+ */
+function writeStatementPdf(dir, pageCount = 3) {
+  const page = n => [
+    [72, 700, 'Date Description Debit Credit Balance'],
+    ...Array.from({ length: 5 }, (_, i) =>
+      [72, 675 - i * 25, `0${n}/09/2026 Payee ${n}${i} 1,${n}${i}0.00 2`]),
+  ];
+  return writeLaidOutPdf(dir, Array.from({ length: pageCount }, (_, i) => page(i + 1)), 'statement');
+}
+
+/**
  * Two tickets from one order.
  *
  * The pages are copies of a template, so nearly everything on them repeats and none of
@@ -389,4 +406,5 @@ module.exports = {
   HEBREW, tempDir, EMISSION_ORDERS, writeTwoColumnPdf, writeCorpus,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
+  writeStatementPdf,
 };

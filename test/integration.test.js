@@ -289,4 +289,20 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(fs.existsSync(path.join(dir, 'reversed.md')), '--force writes the output anyway');
 }
 
+// A table continued across pages. The column header repeats at the top of each page
+// with the first row directly beneath it, so paragraph assembly joins them before
+// furniture matching sees the header as a line. It then matches nothing, survives, and
+// arrives glued to the front of one row per page — which no check reports, because no
+// text was lost. A parser reading the output line by line drops that row.
+{
+  const statement = fx.writeStatementPdf(dir, 3);
+  const { md } = convert(statement, 'md');
+  const header = 'Date Description Debit Credit Balance';
+
+  assert(!md.includes(header), 'the repeated column header is dropped, not glued to a row');
+  const rows = md.match(/\d{2}\/09\/2026/g) || [];
+  assert(rows.length === 15, `every row still reaches the output, got ${rows.length}`);
+  assert(/^\s*01\/09\/2026/m.test(md), "and a page's first row starts its own line");
+}
+
 console.log('All integration tests passed.');
