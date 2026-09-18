@@ -545,6 +545,56 @@ function writeMixedPdf(dir, pageTexts, name = 'mixed.pdf') {
   return file;
 }
 
+/**
+ * A single page with no bold and no structure tags — nothing but font size to tell a
+ * heading from body text, which is all a hand-formatted, untagged PDF ever gives the
+ * geometry path to work with.
+ *
+ * Latin-only, like the other raw-PDF fixtures here: Hebrew in a hand-rolled PDF needs
+ * an embedded font, and building one would test the fixture more than the extractor.
+ *
+ * Three shapes worth distinguishing, all in one page: an isolated large line (a real
+ * heading), two consecutive large lines (a pull quote — promoting either would invent
+ * a section break inside one sentence), and body text at ordinary size throughout.
+ */
+function writeSizedHeadingsPdf(dir) {
+  const BODY = 11, HEAD = 16; // 1.45x — comfortably past HEADING_SIZE_RATIO (1.3)
+  const lines = [
+    [72, 740, BODY, 'This report opens with an ordinary paragraph of body text.'],
+    [72, 720, HEAD, 'Quarterly Overview'],
+    [72, 700, BODY, 'Revenue rose across every region during the period under review.'],
+    [72, 680, HEAD, 'Everything changed this quarter.'],
+    [72, 660, HEAD, 'Nobody expected the numbers we are about to show you.'],
+    [72, 640, BODY, 'The following section breaks the results down region by region.'],
+  ];
+
+  const stream = lines.map(([x, y, size, text]) => `BT /F1 ${size} Tf ${x} ${y} Td (${text}) Tj ET`).join('\n');
+
+  const objects = [
+    '<</Type/Catalog/Pages 2 0 R>>',
+    '<</Type/Pages/Kids[4 0 R]/Count 1>>',
+    '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+    '<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 3 0 R>>>>/Contents 5 0 R>>',
+    `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((obj, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+
+  const file = path.join(dir, 'sized-headings.pdf');
+  fs.writeFileSync(file, pdf, 'latin1');
+  return file;
+}
+
 function writeCorpus(dir) {
   return [
     writeInvoicePdf(dir),
@@ -554,6 +604,7 @@ function writeCorpus(dir) {
     writePdf(dir),
     writeMultiPagePdf(dir, 3),
     writeIllustratedPdf(dir),
+    writeSizedHeadingsPdf(dir),
     writePptx(dir),
     writeXlsx(dir),
     writeCsv(dir),
@@ -566,4 +617,5 @@ module.exports = {
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
   writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf, writeMixedPdf,
+  writeSizedHeadingsPdf,
 };
