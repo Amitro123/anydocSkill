@@ -305,4 +305,27 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
   assert(/^\s*01\/09\/2026/m.test(md), "and a page's first row starts its own line");
 }
 
+// Two columns under a running header that spans the page.
+//
+// Columns are split only at a gutter no line crosses, and a full-width header crosses
+// every candidate — so while the header is still on the page there is no gutter to find
+// and the two columns come back interleaved a line at a time, which is the content in
+// the wrong order rather than merely the wrong shape. Dropping furniture before the
+// page is read leaves the gutter clear. Nothing else pins this, and nothing would
+// report it: no text is lost either way.
+{
+  const { md } = convert(fx.writeRunningHeaderColumnsPdf(dir, 3), 'md');
+  const at = text => md.indexOf(text);
+
+  assert(!md.includes('QUARTERLY REPORT'), 'the running header is dropped');
+
+  for (const page of [1, 2, 3]) {
+    assert(at(`across the region ${page}`) < at(`South closed one ${page}`),
+      `page ${page}: the left column must be read through before the right one starts, ` +
+      `not interleaved a line at a time`);
+  }
+  assert(at('north for the year 1') < at('North opened sites 2'),
+    'and a page must be finished before the next one begins');
+}
+
 console.log('All integration tests passed.');
