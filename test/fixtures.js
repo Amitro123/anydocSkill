@@ -312,6 +312,31 @@ function writeStatementPdf(dir, pageCount = 3) {
 }
 
 /**
+ * Two columns under a running header that spans the full width of the page.
+ *
+ * Columns are only split at a gutter no line crosses, and a full-width header crosses
+ * every candidate — so while the header is still on the page there is no gutter to
+ * find, and sorting by y alone reads the two columns interleaved a line at a time.
+ * Dropping the header first leaves the gutter clear.
+ *
+ * The header has to repeat on every page to be recognised as furniture at all, which
+ * is also how a running header behaves.
+ */
+function writeRunningHeaderColumnsPdf(dir, pageCount = 3) {
+  const left = ['North opened sites', 'and hired staff', 'across the region'];
+  const right = ['South closed one', 'and moved people', 'north for the year'];
+
+  const page = n => [
+    [72, 730, 'QUARTERLY REPORT - CONFIDENTIAL - ALL DIVISIONS'],
+    ...left.map((text, i) => [72, 690 - i * 14, `${text} ${n}`]),
+    ...right.map((text, i) => [330, 690 - i * 14, `${text} ${n}`]),
+  ];
+
+  return writeLaidOutPdf(
+    dir, Array.from({ length: pageCount }, (_, i) => page(i + 1)), 'running-header-columns');
+}
+
+/**
  * Two tickets from one order.
  *
  * The pages are copies of a template, so nearly everything on them repeats and none of
@@ -406,5 +431,5 @@ module.exports = {
   HEBREW, tempDir, EMISSION_ORDERS, writeTwoColumnPdf, writeCorpus,
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
-  writeStatementPdf,
+  writeStatementPdf, writeRunningHeaderColumnsPdf,
 };
