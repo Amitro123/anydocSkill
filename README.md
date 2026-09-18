@@ -478,10 +478,30 @@ would call it a defect — this one does not, because the glyphs are all there a
 mapped. Across both corpora, some 55,000 glyphs of Hebrew banking, legal and office
 output, the count is zero.
 
-What none of this can catch is a glyph mapped to the **wrong** character. A font whose
-tables say `א` where the page shows `ב` produces text that is complete, confident and
-wrong, and every check here will pass it. Comparing against a rendering of the page is
-the only thing that would see it, and that is not done.
+What none of this can *reliably* catch is a glyph mapped to the **wrong** character. A
+font whose tables say `א` where the page shows `ב` produces text that is complete,
+confident and wrong, and every other check here will pass it — comparing against a
+rendering of the page is the only thing that would see it for certain, and that is not
+done.
+
+There is one partial, best-effort signal for it. A Hebrew final form (ך ם ן ף ץ) is
+never correct anywhere but the last letter of a word, in any real Hebrew text — so a
+broken character map, which lands letters on final forms in positions no rule of the
+language allows, shows up as a rate of mid-word final forms far above what real text
+ever produces:
+
+```
+  SCRIPT — 6 of 140 Hebrew word(s) have a final letter where no real Hebrew word puts one:
+    a smoke detector, not a diagnosis — an unusual page of codes or
+    account numbers can trip it too. Nothing else here would catch a
+    glyph mapped to the wrong character; this might. Read a few words.
+```
+
+It is a smoke detector, not a diagnosis, and it never fails the run: an unusual page of
+ID numbers or account codes can trip the same rule without anything being wrong. The
+threshold is set with a wide margin above the rate measured across both corpora — some
+55,000 glyphs of real Hebrew text, where it sits at zero throughout — so that margin is
+what a false alarm costs before this says anything.
 
 **On anything but a PDF the check is narrower.** Only a PDF can be read back
 independently, so only a PDF is checked against the document itself. For every other
@@ -524,6 +544,7 @@ node src/convert.js statement.pdf --report -   # stdout, for a pipe
   "totals": { "pages": 12, "lines": 277, "undecoded": 0 },
   "pictureOnly": [3, 4],
   "illustrations": [{ "page": 7, "width": 534, "height": 247, "share": 0.26 }],
+  "scrambledScript": null,
   "pages": [
     { "page": 1, "lines": 24, "characters": 812, "digest": "9aef0cfd287ade6f",
       "images": 0, "undecoded": 0, "picture": false }
@@ -543,6 +564,10 @@ Three things are worth knowing about the shape:
   read are what another tool would be called in for, and handing them over as text
   inside a paragraph makes the handover a parsing problem.
 - **`findings` are untruncated.** The prose report stops at eight of each; this does not.
+- **`scrambledScript` is `null` or `{ midWord, words, rate }`.** It is the one warning
+  here that is never a `finding` and never affects `passed` — a smoke detector for a
+  glyph mapped to the wrong character, not a verdict. Present as `null` rather than
+  omitted, so a caller does not have to treat a missing key and a clean result differently.
 - **`digest` is a fingerprint of one page's text**, over the normalised characters, so
   whitespace and markup do not register as a change and a single different character
   does. It answers one question across two separate runs of two different tools: *is

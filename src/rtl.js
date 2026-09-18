@@ -52,7 +52,9 @@ const isHebrewChar = ch => ch.codePointAt(0) >= 0x0590 && ch.codePointAt(0) <= 0
 const MIN_SAMPLE = 3;
 
 /**
- * Detect Hebrew captured in visual order (each word character-reversed).
+ * Detect Hebrew captured in visual order (each word character-reversed), and — a
+ * different question read from the same tally — Hebrew that does not look like Hebrew
+ * at all.
  *
  * The signal reads final forms, so it is Hebrew by construction — no other script has
  * them — and it needs a few words before the counts mean anything. Both limits are
@@ -61,10 +63,21 @@ const MIN_SAMPLE = 3;
  * receipt and an Arabic document both land in the second, and used to be reported as
  * the first.
  *
- * @returns {{reversed: boolean, judged: boolean, leading: number, trailing: number, words: number}}
+ * `midWord` is the third position the same tally can catch: a final form is never
+ * correct anywhere but the last letter of a word, in a document reversed or not. Where
+ * `reversed` catches a word read backwards whole, this catches something a reversal
+ * does not produce at all — a letter mapped to the wrong character by a broken font
+ * table, landing on a final form in a position no rule of the language allows. It needs
+ * three Hebrew letters to have a middle distinct from both ends; a two-letter word does
+ * not.
+ *
+ * @returns {{
+ *   reversed: boolean, judged: boolean,
+ *   leading: number, trailing: number, midWord: number, words: number,
+ * }}
  */
 function detectVisualOrder(text) {
-  let leading = 0, trailing = 0, words = 0;
+  let leading = 0, trailing = 0, midWord = 0, words = 0;
 
   for (const word of text.split(/\s+/)) {
     const letters = [...word].filter(isHebrewChar);
@@ -72,10 +85,13 @@ function detectVisualOrder(text) {
     words++;
     if (HEBREW_FINALS.has(letters[0])) leading++;
     if (HEBREW_FINALS.has(letters[letters.length - 1])) trailing++;
+    for (let i = 1; i < letters.length - 1; i++) {
+      if (HEBREW_FINALS.has(letters[i])) { midWord++; break; }
+    }
   }
 
   const judged = words >= MIN_SAMPLE;
-  return { reversed: judged && leading > trailing, judged, leading, trailing, words };
+  return { reversed: judged && leading > trailing, judged, leading, trailing, midWord, words };
 }
 
 const RLM = '‏';  // U+200F RIGHT-TO-LEFT MARK

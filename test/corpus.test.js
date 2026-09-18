@@ -92,11 +92,24 @@ for (const name of documents) {
     // A refusal is a verdict the tool reached about the document, not a crash, and it is
     // worth pinning for exactly the documents most likely to regress quietly — an
     // un-OCR'd scan, an extraction that came back scrambled. Exit 3 is narrower still:
-    // the conversion happened and the verifier has findings about it. Anything else,
-    // including a stack from a page nobody could read, is a real failure.
+    // the conversion happened and the verifier has findings about it.
+    //
+    // Exit 1 is different again: everywhere else it is a real failure, including a stack
+    // from a page nobody could read. The one exception is a `malformed-` fixture, which
+    // exists to fail exactly this way — a corrupt package, not a document this merely
+    // reads badly — so its exit 1 is pinned like any other verdict rather than treated
+    // as this suite's own bug.
     if (err.status === 2 || err.status === 4) refusal = (err.stderr || '').trim();
     else if (err.status === 3) verification = err.stdout || '';
-    else {
+    else if (err.status === 1 && name.startsWith('malformed-')) {
+      refusal = (err.stderr || err.message || '').trim();
+      // The failure this exists to catch: a corrupt input leaving a 0-byte or
+      // half-written file behind while still reporting exit 1.
+      const leftover = fs.readdirSync(out);
+      assert.strictEqual(leftover.length, 0,
+        `${name}: a refused conversion must leave nothing in the output directory, ` +
+        `found ${JSON.stringify(leftover)}`);
+    } else {
       failures.push(`${name}: conversion failed — ${(err.stderr || err.message).trim()}`);
       continue;
     }

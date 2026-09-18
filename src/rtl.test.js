@@ -156,6 +156,20 @@ assert(!arabic.judged && arabic.words === 0,
 assert(!englishText.length || !detectVisualOrder(englishText).judged,
   'and it cannot judge a document with no Hebrew in it');
 
+// midWord — a final form is never correct anywhere but a word's last letter, whether
+// the word is reversed or not; a broken character map trips this without reversing
+// anything, which is what makes it a distinct signal from `reversed`.
+const midScrambled = detectVisualOrder('אךב אלב אגב');
+assert.strictEqual(midScrambled.midWord, 1,
+  'a final form landing on the middle letter of a three-letter word is counted');
+assert.strictEqual(midScrambled.words, 3, 'all three words have enough letters to judge');
+
+assert.strictEqual(detectVisualOrder('ךב ךג ךד').midWord, 0,
+  'a two-letter word has no letter between its first and last, so it cannot trip this');
+assert.strictEqual(good.midWord, 0, 'ordinary correctly-ordered Hebrew has no mid-word finals');
+assert.strictEqual(detectVisualOrder('אךבד אלבד').midWord, 1,
+  'only one of two words is scrambled, and only that one is counted');
+
 // Front-matter is read back by the overwrite guard and by --ingest consumers, so a
 // filename must not be able to break out of a field or forge another one.
 const hostile = addRtlSupport(hebrewText, {
@@ -342,6 +356,53 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   const noted = v.report({ ...clean, pictures: [3, 4], lines: 9, fromPage: true }, { name: 'x' });
   assert(/PICTURE ONLY — page\(s\) 3, 4/.test(noted) && /OCR/.test(noted),
     `but the report names the pages and points at OCR — got:\n${noted}`);
+}
+
+// scrambledScript — the one thing nothing else in verify.js can catch: a glyph mapped
+// to the wrong character, read off detectVisualOrder's midWord tally as a rate rather
+// than a count. It must stay a warning, never a failure, since a page of ID numbers or
+// account codes is real and can trip a rule this blunt.
+{
+  const v = require('./verify');
+  const { scrambledScript, SCRAMBLED_SCRIPT_RATE } = v._internals;
+  const clean = { missing: [], reordered: [], furniture: [], renumbered: [], undecoded: 0 };
+
+  // 40 ordinary words and 2 scrambled ones sits comfortably above the threshold.
+  const ordinary = Array(40).fill('שלום').join(' ');
+  const scrambled = `${ordinary} אךב אךג`;
+  const hot = scrambledScript(scrambled);
+  assert(hot, 'a mid-word final rate above the threshold is flagged');
+  assert.strictEqual(hot.midWord, 2);
+  assert(hot.rate > SCRAMBLED_SCRIPT_RATE, 'the reported rate is the one that tripped it');
+
+  assert.strictEqual(scrambledScript(ordinary), null,
+    'no mid-word finals at all means no warning');
+  assert.strictEqual(scrambledScript('שלום שלום'), null,
+    'too few Hebrew words to judge means no warning, not a false one');
+
+  // A single scrambled word among many stays under the threshold and is left alone —
+  // the odd typo or transliterated code is not a pattern.
+  const one = `${Array(100).fill('שלום').join(' ')} אךב`;
+  assert.strictEqual(scrambledScript(one), null,
+    'one scrambled word in a hundred is noise, not a fire');
+
+  // The verdict must never carry it into a failure — it is a smoke detector, not a
+  // finding this tool acts on.
+  assert(v.passed({ ...clean, scrambledScript: hot }),
+    'scrambledScript must never fail the run on its own');
+
+  const said = v.report({ ...clean, scrambledScript: hot, lines: 9, fromPage: true }, { name: 'x' });
+  assert(/SCRIPT — 2 of 42 Hebrew word\(s\)/.test(said), `the report names the tally — got:\n${said}`);
+  assert(/smoke detector, not a diagnosis/.test(said), 'and frames it as a warning, not a verdict');
+
+  const json = v.reportJson({ ...clean, scrambledScript: hot, pages: [], pictures: [], illustrations: [] },
+    { source: 'x' });
+  assert.deepStrictEqual(json.scrambledScript, hot, 'reportJson carries the same field a caller can read');
+
+  const jsonClean = v.reportJson({ ...clean, scrambledScript: null, pages: [], pictures: [], illustrations: [] },
+    { source: 'x' });
+  assert.strictEqual(jsonClean.scrambledScript, null,
+    'and is present as null rather than omitted, so a caller need not treat a missing key specially');
 }
 
 // How big an image lands on the page, which is a question only the transformation

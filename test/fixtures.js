@@ -595,6 +595,132 @@ function writeSizedHeadingsPdf(dir) {
   return file;
 }
 
+/**
+ * Four ways a package can simply be broken, rather than a document this cannot read
+ * well — a truncated PDF, a PDF whose xref table is destroyed, a `.docx` that is not a
+ * readable zip, and a plain text file wearing a `.pdf` extension.
+ *
+ * What is being pinned is not that these fail — they cannot do anything else — but that
+ * they fail the *same way* every time: a clear message, the documented exit code, and no
+ * partial output file left behind. A 0-byte or half-written file that exits 0 is the
+ * failure this project started from, and nothing about reading a broken package should
+ * be able to bring it back.
+ *
+ * Named with a shared `malformed-` prefix so test/corpus.test.js can tell these apart
+ * from a document that broke by accident — the one case where the same exit code has to
+ * remain a hard test failure rather than something quietly snapshotted as expected.
+ */
+function writeMalformedFixtures(dir) {
+  // A PDF that stops mid stream, with no trailer, no xref, nothing after the point a
+  // real writer would still be adding pages.
+  const truncated = path.join(dir, 'malformed-truncated.pdf');
+  fs.writeFileSync(truncated,
+    '%PDF-1.4\n' +
+    '1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n' +
+    '2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n' +
+    '3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]' +
+    '/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>\nendobj\n' +
+    '4 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendobj\n' +
+    '5 0 obj\n<</Length 44>>\nstream\nBT /F1 12 Tf 72 720 Td (Hello) Tj E',
+    'latin1');
+
+  // A header that reads fine and a body that cannot be indexed at all — the xref table
+  // real PDF readers fall back to rebuilding from the objects, but this one gives them
+  // nothing worth rebuilding from either.
+  const badXref = path.join(dir, 'malformed-badxref.pdf');
+  fs.writeFileSync(badXref,
+    '%PDF-1.4\n' +
+    '1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n' +
+    'xref\nthis is not a cross-reference table\n' +
+    'trailer\n<</Size 1/Root 1 0 R>>\nstartxref\n999999\n%%EOF\n',
+    'latin1');
+
+  // A .docx is a zip; this is bytes that only start like one.
+  const brokenZip = path.join(dir, 'malformed-brokenzip.docx');
+  fs.writeFileSync(brokenZip, 'PK this is not a readable zip archive at all', 'latin1');
+
+  // The extension says PDF; the bytes say otherwise.
+  const notAPdf = path.join(dir, 'malformed-nottext.pdf');
+  fs.writeFileSync(notAPdf, 'This is a plain text file wearing a .pdf extension.\n', 'utf8');
+
+  return [truncated, badXref, brokenZip, notAPdf];
+}
+
+/**
+ * One line per case where a script boundary inside a single RTL line is where
+ * markRtlLines and the RLM placement in rtl.js either hold or do not: an embedded
+ * product name, a number or a date, a parenthesised Latin run (the mirrored-character
+ * case), and a heading followed by a Latin code identifier. Plain enough content to
+ * read the snapshot by eye and notice when the placement changes.
+ *
+ * ODT rather than a raw PDF: the RTL markup this exercises runs on the finished
+ * Markdown string regardless of source format, and ODT holds literal UTF-8 text with
+ * none of a hand-rolled PDF's font-embedding cost for a script this needs to mix freely.
+ */
+function writeMixedScriptDoc(dir) {
+  const lines = [
+    'הזמנתי מוצר חדש מהאתר Amazon Prime ומחכה למשלוח.',
+    'המחיר הסופי היה 1,499.90 ש"ח, לתשלום עד 15/03/2027.',
+    'הפגישה תתקיים בחדר הישיבות (Room 204B) בקומה השנייה.',
+    'פרוטוקול בדיקה CVE-2027-1044',
+  ];
+
+  const zip = new AdmZip();
+  zip.addFile('mimetype', Buffer.from('application/vnd.oasis.opendocument.text'));
+  zip.addFile('META-INF/manifest.xml', Buffer.from(
+    `<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
+    `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>` +
+    `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`));
+  zip.addFile('content.xml', Buffer.from(
+    `<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+    `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:text>` +
+    lines.map(l => `<text:p>${l}</text:p>`).join('') +
+    `</office:text></office:body></office:document-content>`));
+
+  const file = path.join(dir, 'mixed-script.odt');
+  zip.writeZip(file);
+  return file;
+}
+
+/**
+ * A page whose text is complete but wrong: enough Hebrew final forms landing in the
+ * middle of a word — never a position any real Hebrew word puts one in — to cross
+ * verify.js's SCRAMBLED_SCRIPT_RATE. This is what a broken character map actually
+ * produces, not a hand-reversed string, so it proves the detector fires end to end
+ * rather than only on the function it calls directly.
+ *
+ * ODT for the same reason as writeMixedScriptDoc: literal UTF-8 text, no font-embedding
+ * cost for a fixture that only needs its characters, not its glyphs, to be right.
+ */
+function writeScrambledScriptDoc(dir) {
+  const good = [
+    'הצדדים לגישור מתחייבים לשתף פעולה עם המגשרת בתום לב ובשקיפות מלאה',
+    'המגשרת תשמור בסודיות מוחלטת על כל פרט שנמסר לה בהליך הגישור',
+    'הסכם זה נחתם בין הצדדים לאחר משא ומתן ממושך וכולל את כל התנאים המוסכמים',
+  ];
+  // Four letters each, a final form forced strictly between the first and last —
+  // exactly the shape a font table mapping the wrong glyph produces.
+  const corrupted = 'אךבד הםגד וןטס זףרם';
+
+  const lines = [...good, corrupted];
+
+  const zip = new AdmZip();
+  zip.addFile('mimetype', Buffer.from('application/vnd.oasis.opendocument.text'));
+  zip.addFile('META-INF/manifest.xml', Buffer.from(
+    `<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
+    `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>` +
+    `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/></manifest:manifest>`));
+  zip.addFile('content.xml', Buffer.from(
+    `<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+    `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2"><office:body><office:text>` +
+    lines.map(l => `<text:p>${l}</text:p>`).join('') +
+    `</office:text></office:body></office:document-content>`));
+
+  const file = path.join(dir, 'scrambled-script.odt');
+  zip.writeZip(file);
+  return file;
+}
+
 function writeCorpus(dir) {
   return [
     writeInvoicePdf(dir),
@@ -609,6 +735,9 @@ function writeCorpus(dir) {
     writeXlsx(dir),
     writeCsv(dir),
     writeOdt(dir),
+    writeMixedScriptDoc(dir),
+    writeScrambledScriptDoc(dir),
+    ...writeMalformedFixtures(dir),
   ];
 }
 
@@ -617,5 +746,5 @@ module.exports = {
   writeCsv, writeTxt, writeRtf, writeXlsx, writeOdt, writePptx, writePdf,
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
   writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf, writeMixedPdf,
-  writeSizedHeadingsPdf,
+  writeSizedHeadingsPdf, writeMalformedFixtures, writeMixedScriptDoc, writeScrambledScriptDoc,
 };
