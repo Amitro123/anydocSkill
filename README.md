@@ -264,11 +264,12 @@ Verified letter.pdf: 277 lines of page text.
   No text lost, no number changed.
 ```
 
-It reports four things: lines the page shows and the output does not, lines that kept
+It reports five things: lines the page shows and the output does not, lines that kept
 every word but changed order (a table row read across rather than down), header and
-footer lines dropped on purpose, and numbers whose tallies differ — which is how a
-renumbered list shows up, since a renderer generates those numbers rather than storing
-them. Exit code is 3 when text is missing or a number changed.
+footer lines dropped on purpose, numbers whose tallies differ — which is how a renumbered
+list shows up, since a renderer generates those numbers rather than storing them — and
+glyphs the page draws that carry no character at all. Exit code is 3 for any of those
+that mean text the reader can see is not in the output.
 
 Every defect this converter has had was visible this way. Finding them meant reading a
 converted document against its original by eye, which does not scale and misses the
@@ -277,6 +278,28 @@ quiet ones — a dropped footer, a clause renumbered by one.
 What it does not check: how words were assembled from the glyphs, since it reads lines
 through the same joining the converter does. It checks that the lines the extractor read
 reach the reader intact.
+
+**Loss before extraction is a separate question, and it is asked separately.** Both
+sides of the comparison above come from the same text layer, so a character the PDF
+never yielded is missing from both and the comparison calls it clean. The page itself is
+the only witness, so the glyphs it draws are counted against the characters they carry:
+
+```
+  UNDECODED — 12 glyph(s) the page draws carry no character:
+    they are absent from the extraction and from the output alike, so nothing
+    else here can see them. The page shows text this conversion does not hold.
+```
+
+That counts glyphs, not suspicious-looking text. A bank printing `.10` for ten agorot
+reads exactly like a truncated number, and a check that read the output for odd shapes
+would call it a defect — this one does not, because the glyphs are all there and all
+mapped. Across both corpora, some 55,000 glyphs of Hebrew banking, legal and office
+output, the count is zero.
+
+What none of this can catch is a glyph mapped to the **wrong** character. A font whose
+tables say `א` where the page shows `ב` produces text that is complete, confident and
+wrong, and every check here will pass it. Comparing against a rendering of the page is
+the only thing that would see it, and that is not done.
 
 **On anything but a PDF the check is narrower.** Only a PDF can be read back
 independently, so only a PDF is checked against the document itself. For every other
