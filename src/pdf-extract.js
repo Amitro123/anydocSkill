@@ -346,6 +346,12 @@ function linesToParagraphs(rawLines) {
 // furniture, and dropping it would delete the content.
 const MAX_REPEATED_SHARE = 0.5;
 
+// A header or footer is drawn once on a page, or twice where the same text is set at
+// both ends. A line drawn many times on one page is a column of a table repeating its
+// own values — a status, a currency, a debit/credit flag — and it looks identical to a
+// footer to anything counting pages alone. Dropping it takes a column of data with it.
+const MAX_PER_PAGE = 2;
+
 /**
  * The texts that repeat on every page and are page furniture rather than content.
  *
@@ -356,6 +362,10 @@ const MAX_REPEATED_SHARE = 0.5;
  * header is a small part of a page, so a repeated share that large is the signal to
  * keep everything.
  *
+ * It also stops meaning that within a single page. A table column whose cells hold the
+ * same short value on every row repeats as faithfully as any footer, so a line drawn
+ * more than MAX_PER_PAGE times on one page is read as content.
+ *
  * @param {string[][]} candidates - per page, the texts eligible to be furniture
  * @param {number[]} pageSizes - per page, how many blocks the page holds in total
  * @returns {Set<string>}
@@ -364,11 +374,19 @@ function repeatedFurniture(candidates, pageSizes) {
   if (candidates.length < 2) return new Set();
 
   const counts = new Map();
+  const crowded = new Set();
   for (const texts of candidates) {
-    for (const text of new Set(texts)) counts.set(text, (counts.get(text) || 0) + 1);
+    const onThisPage = new Map();
+    for (const text of texts) onThisPage.set(text, (onThisPage.get(text) || 0) + 1);
+    for (const [text, n] of onThisPage) {
+      counts.set(text, (counts.get(text) || 0) + 1);
+      if (n > MAX_PER_PAGE) crowded.add(text);
+    }
   }
   const furniture = new Set(
-    [...counts].filter(([, n]) => n === candidates.length).map(([text]) => text)
+    [...counts]
+      .filter(([text, n]) => n === candidates.length && !crowded.has(text))
+      .map(([text]) => text)
   );
 
   const total = pageSizes.reduce((a, b) => a + b, 0);
