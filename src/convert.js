@@ -5,6 +5,7 @@
  * Usage:
  *   node convert.js <input-file> [--format md|html|both] [--out-dir <dir>]
  *                                [--pages <spec>] [--ingest] [--force]
+ *                                [--verify] [--report <path>|-]
  *
  * Exit codes are part of the interface, so callers in any language can tell a
  * scrambled-text rejection from an ordinary failure without parsing stderr:
@@ -28,8 +29,8 @@ const { preserveNumbering } = require('./numbering');
 const { renderHtml } = require('./render-html');
 const { parsePageSpec } = require('./convert-args');
 
-const FLAGS = ['--format', '--out-dir', '--pages', '--force', '--ingest', '--verify'];
-const VALUED = new Set(['--format', '--out-dir', '--pages']);
+const FLAGS = ['--format', '--out-dir', '--pages', '--force', '--ingest', '--verify', '--report'];
+const VALUED = new Set(['--format', '--out-dir', '--pages', '--report']);
 
 /**
  * Parse the command line, refusing anything it does not recognise.
@@ -41,7 +42,7 @@ const VALUED = new Set(['--format', '--out-dir', '--pages']);
 function parseArgs(argv) {
   const args = {
     format: 'both', outDir: null, input: null,
-    force: false, ingest: false, pages: null, verify: false,
+    force: false, ingest: false, pages: null, verify: false, report: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -51,13 +52,17 @@ function parseArgs(argv) {
       if (!FLAGS.includes(arg)) {
         throw new Error(`Unknown option "${arg}". Options are: ${FLAGS.join(', ')}.`);
       }
-      if (VALUED.has(arg) && (i + 1 >= argv.length || argv[i + 1].startsWith('-'))) {
+      // A lone "-" is the conventional name for the standard stream, not a flag, and
+      // refusing it here is how `--report -` came back as "--report needs a value".
+      const next = argv[i + 1];
+      if (VALUED.has(arg) && (next === undefined || (next.startsWith('-') && next !== '-'))) {
         throw new Error(`${arg} needs a value.`);
       }
 
       if (arg === '--format') args.format = argv[++i];
       else if (arg === '--out-dir') args.outDir = argv[++i];
       else if (arg === '--pages') args.pages = parsePageSpec(argv[++i]);
+      else if (arg === '--report') args.report = argv[++i];
       else args[arg.slice(2)] = true;
       continue;
     }
@@ -116,12 +121,20 @@ async function toMarkdown(inputPath, pages = null) {
   return toMarkdown(inputPath);
 }
 
-async function convert({ input, format, outDir, force, ingest, pages, verify: shouldVerify }) {
+async function convert({
+  input, format, outDir, force, ingest, pages, verify: shouldVerify, report: reportPath,
+}) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
 
   const title = path.basename(input, path.extname(input));
   const dir = outDir || path.dirname(input);
   fs.mkdirSync(dir, { recursive: true });
+
+  // With the report itself on stdout, stdout carries JSON and nothing else: a caller
+  // parsing it cannot also be asked to step over "Written:" lines to find the start.
+  // Everything addressed to a person moves to stderr, which is where narration belongs.
+  const toStdout = reportPath === '-';
+  const say = toStdout ? console.error : console.log;
 
   const raw = await toMarkdown(input, pages);
 
@@ -205,13 +218,28 @@ async function convert({ input, format, outDir, force, ingest, pages, verify: sh
     written.push(htmlPath);
   }
 
-  written.forEach(p => console.log(`Written: ${p}`));
+  written.forEach(p => say(`Written: ${p}`));
 
-  if (!shouldVerify) return;
+  // --report is the same check asked for in a different format, so it runs the
+  // verification whether or not --verify was also passed. A report written from a run
+  // that never verified would state a `passed` it had not established.
+  if (!shouldVerify && !reportPath) return;
 
-  const { verify, report, passed } = require('./verify');
+  const { verify, report, reportJson, passed } = require('./verify');
   const result = await verify(input, { raw, html, pages });
-  console.log(report(result, { name: path.basename(input) }));
+
+  if (reportPath) {
+    const json = JSON.stringify(reportJson(result, { source: path.basename(input) }), null, 2);
+    if (toStdout) console.log(json);
+    else {
+      fs.writeFileSync(reportPath, json, 'utf8');
+      say(`Report: ${reportPath}`);
+    }
+  }
+
+  // The prose report is for a person. Printing it beside the JSON a caller asked for
+  // would be noise in the one place that is not reading prose.
+  if (shouldVerify) say(report(result, { name: path.basename(input) }));
   if (!passed(result)) process.exitCode = EXIT_UNVERIFIED;
 }
 
@@ -224,7 +252,8 @@ try {
 }
 if (!args.input) {
   console.error('Usage: node convert.js <input-file> [--format md|html|both] ' +
-                '[--out-dir <dir>] [--pages <spec>] [--ingest] [--force] [--verify]');
+                '[--out-dir <dir>] [--pages <spec>] [--ingest] [--force] [--verify] ' +
+                '[--report <path>|-]');
   process.exit(EXIT_FAILURE);
 }
 convert(args).catch(err => {

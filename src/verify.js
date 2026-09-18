@@ -18,6 +18,7 @@
  */
 
 const path = require('path');
+const crypto = require('crypto');
 
 const BIDI = /[‎‏‪-‮⁦-⁩]/g;
 // Characters that exist on one side only: Markdown a renderer consumes, and the cell
@@ -128,13 +129,25 @@ function readPage(operatorList, OPS) {
   return { unmapped, images };
 }
 
+/**
+ * A short content fingerprint for one page of text.
+ *
+ * Its job is to answer one question across two separate runs: is this the same page text
+ * as before? That matters once a second tool is allowed to rewrite the text layer, where
+ * the failure to catch is a page that already read correctly being re-guessed. Taken over
+ * the normalised text, so whitespace and markup differences do not register as a change
+ * while a single different character does. Truncated because 64 bits is far past what
+ * distinguishing a few hundred pages needs, and a full hash makes the report unreadable.
+ */
+const digest = text =>
+  crypto.createHash('sha256').update(normalise(text)).digest('hex').slice(0, 16);
+
 async function pdfLines(filePath, wanted) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const { _internals: { joinOneLine } } = require('./pdf-extract');
   const doc = await pdfjs.getDocument({ url: filePath, useSystemFonts: true }).promise;
 
   const pages = [];
-  const pictures = [];
   let undecoded = 0;
   for (let n = 1; n <= doc.numPages; n++) {
     if (wanted && !wanted.has(n)) continue;
@@ -142,11 +155,6 @@ async function pdfLines(filePath, wanted) {
     const drawn = readPage(await page.getOperatorList(), pdfjs.OPS);
     undecoded += drawn.unmapped;
     const { items } = await page.getTextContent();
-
-    // An image with no text beside it is a page this cannot read at all. Said plainly
-    // because it is the one case where OCR would do better, and where saying nothing
-    // reads as "there was nothing there".
-    if (drawn.images && !items.some(i => i.str.trim())) pictures.push(n);
 
     const lines = [];
     let line = [];
@@ -156,10 +164,24 @@ async function pdfLines(filePath, wanted) {
     }
     if (line.length) lines.push(line);
 
-    pages.push(lines.map(joinOneLine).filter(Boolean));
+    const text = lines.map(joinOneLine).filter(Boolean);
+
+    pages.push({
+      // The page's own number, not its position in this array. With --pages 5-7 the two
+      // differ, and every line reported against the wrong page sends its reader to the
+      // wrong place in the document.
+      number: n,
+      lines: text,
+      images: drawn.images,
+      undecoded: drawn.unmapped,
+      // An image with no text beside it is a page this cannot read at all. Said plainly
+      // because it is the one case where OCR would do better, and where saying nothing
+      // reads as "there was nothing there".
+      picture: drawn.images > 0 && !text.length,
+    });
   }
   await doc.cleanup();
-  return { pages, undecoded, pictures };
+  return { pages, undecoded };
 }
 
 /**
@@ -175,8 +197,16 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
   const fromPage = path.extname(inputPath).toLowerCase() === '.pdf';
   const read = fromPage
     ? await pdfLines(inputPath, wanted)
-    : { pages: [raw.split('\n').filter(line => !OWN_MARKUP.test(line))], undecoded: 0, pictures: [] };
-  const { pages, undecoded, pictures } = read;
+    : {
+      pages: [{
+        number: 1,
+        lines: raw.split('\n').filter(line => !OWN_MARKUP.test(line)),
+        images: 0, undecoded: 0, picture: false,
+      }],
+      undecoded: 0,
+    };
+  const { pages, undecoded } = read;
+  const pictures = pages.filter(page => page.picture).map(page => page.number);
 
   const rendered = renderedText(html);
   const haystack = normalise(rendered);
@@ -187,8 +217,8 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
   // are copies of one template, where nearly everything repeats and none of it is a
   // header. Judging it any other way here would report a whole document as furniture.
   const furnitureText = repeatedFurniture(
-    pages.map(lines => lines.map(l => l.trim())),
-    pages.map(lines => lines.length)
+    pages.map(page => page.lines.map(l => l.trim())),
+    pages.map(page => page.lines.length)
   );
 
   const missing = [];
@@ -197,8 +227,8 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
   const kept = [];
   const seen = new Set();
 
-  pages.forEach((lines, i) => {
-    for (const line of lines) {
+  pages.forEach(page => {
+    for (const line of page.lines) {
       // A line the page draws as a bullet loses its mark to the renderer's own.
       const text = line.replace(LEADING_BULLET, '');
       const key = normalise(text);
@@ -211,7 +241,7 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
       seen.add(key);
       if (haystack.includes(key)) continue;
 
-      const where = { page: i + 1, text: line.trim() };
+      const where = { page: page.number, text: line.trim() };
       if (isFurniture) furniture.push(where);
       // Cells read across a table row in a different order than down a page line, so
       // a line whose every word is present is rearranged rather than lost.
@@ -229,7 +259,22 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     if (source !== output) renumbered.push({ value, source, output });
   }
 
-  return { missing, reordered, furniture, renumbered, undecoded, pictures, lines: seen.size, fromPage };
+  // What each page held, kept alongside the findings so a second run over the same
+  // document can be compared against this one page by page rather than as a total.
+  const detail = pages.map(page => ({
+    page: page.number,
+    lines: page.lines.length,
+    characters: normalise(page.lines.join('')).length,
+    digest: digest(page.lines.join('\n')),
+    images: page.images,
+    undecoded: page.undecoded,
+    picture: page.picture,
+  }));
+
+  return {
+    missing, reordered, furniture, renumbered, undecoded, pictures,
+    pages: detail, lines: seen.size, fromPage,
+  };
 }
 
 const SHOWN = 8;
@@ -287,10 +332,62 @@ function report(result, { name }) {
   return lines.join('\n');
 }
 
+/**
+ * The same result as a structure a caller can read, rather than a paragraph for a person.
+ *
+ * `report` above is written to be read once, by someone deciding whether to trust a
+ * conversion: it truncates its lists at `SHOWN`, phrases counts as sentences, and buries
+ * the page numbers inside them. Anything reading it back has to scrape prose that exists
+ * to be readable, and will keep working right up until the wording improves.
+ *
+ * This is the other half of that interface, and it exists because the document that most
+ * needs a second tool is the one this one cannot read. Handing over "pages 4, 7" as text
+ * in a sentence makes the handover a parsing problem; handing over `pictureOnly` makes it
+ * a field. The per-page digests are here for the return trip: once something else has
+ * rewritten the text layer, they are what shows whether the pages that already read
+ * correctly still say exactly what they said.
+ *
+ * `schema` is a promise that a field means what it meant last time. Anything reading this
+ * across a version boundary should check it rather than guess.
+ */
+function reportJson(result, { source }) {
+  return {
+    schema: 1,
+    tool: 'anydoc',
+    version: require('../package.json').version,
+    source,
+    verifiedAt: new Date().toISOString(),
+    // False where there was no page to read back, which is the difference between "the
+    // output holds what the document holds" and "the output holds what extraction found".
+    fromPage: result.fromPage,
+    passed: passed(result),
+    totals: {
+      pages: result.pages.length,
+      lines: result.lines,
+      undecoded: result.undecoded,
+    },
+    // The pages nothing here can read, named on their own because they are the reason a
+    // caller would be reading this at all.
+    pictureOnly: result.pictures,
+    pages: result.pages,
+    // Untruncated, unlike the prose report: a list cut off at eight is a summary, and
+    // a caller comparing two runs needs all of it.
+    findings: {
+      missing: result.missing,
+      reordered: result.reordered,
+      furniture: result.furniture,
+      renumbered: result.renumbered,
+    },
+  };
+}
+
 // A glyph the page draws and the text layer never yielded is text the reader can see
 // and the output cannot hold, which is the same loss as any other — so it fails the
 // same way rather than being reported as a note under a clean verdict.
 const passed = result =>
   !result.missing.length && !result.renumbered.length && !result.undecoded;
 
-module.exports = { verify, report, passed, _internals: { renderedText, numberCounts, normalise, readPage } };
+module.exports = {
+  verify, report, reportJson, passed,
+  _internals: { renderedText, numberCounts, normalise, readPage, digest },
+};

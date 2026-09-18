@@ -382,6 +382,56 @@ This is why a `.docx` is still worth converting from over a PDF of the same docu
 it extracts more reliably in the first place — and why the PDF path is the one with a
 real check behind it.
 
+### The same report, for a program
+
+Everything above is written to be read once, by someone deciding whether to trust a
+conversion. A program reading it back has to scrape prose that exists to be readable,
+and truncates its lists at eight. `--report` gives the same result as a structure:
+
+```bash
+node src/convert.js statement.pdf --report statement.report.json
+node src/convert.js statement.pdf --report -   # stdout, for a pipe
+```
+
+```json
+{
+  "schema": 1,
+  "tool": "anydoc",
+  "version": "0.7.0",
+  "source": "statement.pdf",
+  "fromPage": true,
+  "passed": true,
+  "totals": { "pages": 12, "lines": 277, "undecoded": 0 },
+  "pictureOnly": [3, 4],
+  "pages": [
+    { "page": 1, "lines": 24, "characters": 812, "digest": "9aef0cfd287ade6f",
+      "images": 0, "undecoded": 0, "picture": false }
+  ],
+  "findings": { "missing": [], "reordered": [], "furniture": [], "renumbered": [] }
+}
+```
+
+`--report` runs the verification whether or not `--verify` is also passed — a report
+from a run that never checked would state a `passed` it had not established. Pass both
+to get the prose as well. Exit codes are unchanged, so exit 3 still means it found
+something, and the report is written either way.
+
+Three things are worth knowing about the shape:
+
+- **`pictureOnly` is a field, not a sentence.** Pages this cannot read are what another
+  tool would be called in for, and handing them over as text inside a paragraph makes
+  the handover a parsing problem.
+- **`findings` are untruncated.** The prose report stops at eight of each; this does not.
+- **`digest` is a fingerprint of one page's text**, over the normalised characters, so
+  whitespace and markup do not register as a change and a single different character
+  does. It answers one question across two separate runs of two different tools: *is
+  this still the same page text?* That matters the moment something is allowed to
+  rewrite a text layer — the failure to catch is a page that already read correctly
+  being quietly re-guessed.
+
+`schema` is a promise that a field means what it meant last time. Check it rather than
+assume it.
+
 ## Regression corpus
 
 The generated fixtures in `test/` pin the behaviours someone thought to write down. Real

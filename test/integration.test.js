@@ -328,4 +328,75 @@ for (const [name, make] of [['csv', fx.writeCsv], ['rtf', fx.writeRtf],
     'and a page must be finished before the next one begins');
 }
 
+// --- The machine-readable report ---
+//
+// This is the interface a second tool reads instead of scraping the prose report, so
+// what is pinned here is the contract: the fields exist, they are keyed by the page
+// numbers a reader would use, and a page's digest answers "is this still the same text"
+// across two separate runs. Prose can be reworded freely; this cannot.
+{
+  const { spawnSync } = require('child_process');
+  const pdf = fx.writeMultiPagePdf(dir, 4);
+  const out = path.join(dir, 'report-out');
+
+  const run = extra => {
+    const result = spawnSync(process.execPath,
+      [CLI, pdf, '--format', 'both', '--out-dir', out, ...extra],
+      { encoding: 'utf8' });
+    assert(result.status === 0, `report run failed (${result.status}): ${result.stderr}`);
+    return result;
+  };
+
+  const file = path.join(dir, 'report.json');
+  run(['--report', file, '--verify']);
+  const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+  assert(report.schema === 1, 'the report states a schema version to read it by');
+  assert(report.tool === 'anydoc' && report.source === path.basename(pdf),
+    'the report names the tool and the document it describes');
+  assert(report.fromPage === true, 'a PDF was read back from its pages');
+  assert(report.passed === true, 'a clean fixture verifies clean');
+  assert(Array.isArray(report.pictureOnly), 'pictureOnly is a list even when empty');
+  assert(report.totals.pages === 4, `all 4 pages are described, got ${report.totals.pages}`);
+
+  for (const page of report.pages) {
+    assert(typeof page.digest === 'string' && page.digest.length,
+      `page ${page.page} carries a content digest`);
+    assert(typeof page.images === 'number' && typeof page.picture === 'boolean',
+      `page ${page.page} states what it drew`);
+  }
+
+  // Same bytes in, same digests out — otherwise nothing can be concluded from a change.
+  const second = path.join(dir, 'report-2.json');
+  run(['--report', second]);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(second, 'utf8')).pages.map(p => p.digest),
+    report.pages.map(p => p.digest),
+    'a second run of the same document must produce the same per-page digests');
+
+  // Pages differing in content must differ in digest, or the check cannot fail.
+  assert(new Set(report.pages.map(p => p.digest)).size === 4,
+    'pages with different text must not share a digest');
+
+  // Reported against the page a reader would turn to. These used to be the position in
+  // the array, so every finding under --pages pointed at the wrong part of the document.
+  const selected = path.join(dir, 'report-pages.json');
+  run(['--report', selected, '--pages', '3-4']);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(selected, 'utf8')).pages.map(p => p.page), [3, 4],
+    'a page selection reports the document\'s own page numbers, not 1..n');
+
+  // "-" sends the report to stdout, and then stdout holds the report and nothing else:
+  // a caller piping this into a parser cannot also be asked to skip past other lines.
+  const piped = run(['--report', '-', '--verify']);
+  JSON.parse(piped.stdout);
+  assert(/Written:/.test(piped.stderr) && /Verified/.test(piped.stderr),
+    'everything written for a person goes to stderr instead');
+
+  // A lone "-" is a value. The guard against a missing one used to swallow it.
+  const missing = spawnSync(process.execPath, [CLI, pdf, '--report'], { encoding: 'utf8' });
+  assert(missing.status === 1 && /--report needs a value/.test(missing.stderr),
+    'but an actually missing value is still refused');
+}
+
 console.log('All integration tests passed.');
