@@ -82,24 +82,31 @@ for (const name of documents) {
   scratch.push(out);
 
   let verification = '';
+  let refusal = '';
   try {
     verification = execFileSync(
       process.execPath, [CLI, input, '--format', 'both', '--out-dir', out, '--verify'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
   } catch (err) {
-    // Exit 3 is the verifier reporting on a conversion that did happen, so its findings
-    // belong in the snapshot like any other output; anything else is a real failure.
-    if (err.status !== 3) {
+    // A refusal is a verdict the tool reached about the document, not a crash, and it is
+    // worth pinning for exactly the documents most likely to regress quietly — an
+    // un-OCR'd scan, an extraction that came back scrambled. Exit 3 is narrower still:
+    // the conversion happened and the verifier has findings about it. Anything else,
+    // including a stack from a page nobody could read, is a real failure.
+    if (err.status === 2 || err.status === 4) refusal = (err.stderr || '').trim();
+    else if (err.status === 3) verification = err.stdout || '';
+    else {
       failures.push(`${name}: conversion failed — ${(err.stderr || err.message).trim()}`);
       continue;
     }
-    verification = err.stdout || '';
   }
 
-  const md = fs.readFileSync(path.join(out, `${path.parse(name).name}.md`), 'utf8');
-  const actual = `${body(md).trim()}\n\n--- verification ---\n${
-    verification.split('\n').filter(l => !l.startsWith('Written:')).join('\n').trim()}\n`;
+  const actual = refusal
+    ? `--- refused ---\n${refusal}\n`
+    : `${body(fs.readFileSync(path.join(out, `${path.parse(name).name}.md`), 'utf8')).trim()}` +
+      `\n\n--- verification ---\n${
+        verification.split('\n').filter(l => !l.startsWith('Written:')).join('\n').trim()}\n`;
 
   const snapshot = path.join(snapshots, `${name}.snapshot.md`);
 

@@ -58,6 +58,9 @@ function nodeText(node, byId, used) {
   return collected.length ? joinItems(collected) : '';
 }
 
+// Numbering the document wrote into the item's own text: "4.", "4.1.", "1)".
+const SELF_NUMBERED = /^\d+(?:\.\d+)*[.)]\s/;
+
 const numericLabel = label => {
   const match = label.match(/^(\d+)\s*[.)]?$/);
   return match ? Number(match[1]) : null;
@@ -123,11 +126,21 @@ function renderList(node, byId, used, blocks, meta) {
   const rendered = tail ? [tail.body] : [];
   if (!entries.length) return rendered;
 
-  return rendered.concat(labelRuns(entries).map(run => {
+  return rendered.concat(labelRuns(entries).flatMap(run => {
     if (run.ordered) {
       const start = numericLabel(run.entries[0].label);
       return run.entries.map((e, i) => `${start + i}. ${e.body}`).join('\n');
     }
+
+    // A contract tags its clauses as a list but writes the numbering into the text
+    // rather than into a Lbl, so every item arrives unlabelled while already carrying
+    // "4." or "4.1." at the front. Adding a bullet there prints a mark the page does
+    // not have, in front of the number it does. Each clause becomes a block of its own
+    // instead, which leaves the numbering to be read as the document wrote it.
+    if (run.entries.every(e => !e.label && SELF_NUMBERED.test(e.body))) {
+      return run.entries.map(e => e.body);
+    }
+
     return run.entries
       .map(e => `- ${[e.label + e.separator, e.body].filter(Boolean).join(' ')}`)
       .join('\n');
