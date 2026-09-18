@@ -19,6 +19,7 @@
 
 const path = require('path');
 const crypto = require('crypto');
+const { detectVisualOrder } = require('./rtl');
 
 // pdfjs-dist ships glyph-width metrics for the 14 standard PDF fonts; pointing it there
 // is what stops it warning to stderr whenever a page references one it cannot otherwise
@@ -88,6 +89,41 @@ function numberCounts(text) {
     counts.set(match, (counts.get(match) || 0) + 1);
   }
   return counts;
+}
+
+// Above this share of Hebrew words, a final form in the middle of a word is a pattern
+// rather than noise. Measured against roughly 55,000 glyphs of Hebrew banking, legal
+// and office documents in this project's corpora, where the rate is 0 throughout — the
+// margin below that is what an ID number, an account code or an unusual acronym gets to
+// cost before this says anything, and it is deliberately wide, because a false alarm
+// here is the one this check exists not to be.
+const SCRAMBLED_SCRIPT_RATE = 0.03;
+
+/**
+ * A glyph mapped to the wrong character is the one thing nothing else here can catch:
+ * both sides of every other comparison in this file come from the same text layer, so
+ * a font whose table hands back `א` for what the page draws as `ב` produces text that
+ * is complete, confident, and wrong on both sides at once. Comparing against a
+ * rendering of the page is the only way to actually catch it, and that is not done here
+ * — see the README's "Checking a conversion" section for why.
+ *
+ * What this catches instead is narrower and cheaper: a Hebrew final form is never
+ * correct anywhere but the last letter of a word, in any real Hebrew text, reversed or
+ * not — detectVisualOrder's own `midWord` tally, read as a rate rather than a count. A
+ * broken character map is one of the few ways that rule gets broken at a rate rather
+ * than by the odd typo, so a document clearing it is a smoke detector going off, not
+ * proof of a fire. It is reported as a warning for exactly that reason: real, unusual
+ * documents — a page of ID numbers, an appendix of account codes — can trip a rule this
+ * blunt, and a check that fails a run over that is worse than one that says nothing.
+ */
+function scrambledScript(text) {
+  const order = detectVisualOrder(text);
+  if (!order.judged) return null;
+
+  const rate = order.midWord / order.words;
+  if (rate <= SCRAMBLED_SCRIPT_RATE) return null;
+
+  return { midWord: order.midWord, words: order.words, rate };
 }
 
 const IDENTITY = [1, 0, 0, 1, 0, 0];
@@ -422,6 +458,8 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     if (source !== output) renumbered.push({ value, source, output });
   }
 
+  const scriptCheck = scrambledScript(kept.join('\n'));
+
   // What each page held, kept alongside the findings so a second run over the same
   // document can be compared against this one page by page rather than as a total.
   const detail = pages.map(page => ({
@@ -437,6 +475,7 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
   return {
     missing, reordered, furniture, renumbered, undecoded, pictures,
     illustrations: illustrated, pages: detail, lines: seen.size, fromPage,
+    scrambledScript: scriptCheck,
   };
 }
 
@@ -502,6 +541,16 @@ function report(result, { name }) {
     lines.push('    check here can see them. Read those pages if they carry content.');
   }
 
+  if (result.scrambledScript) {
+    const { midWord, words: total } = result.scrambledScript;
+    lines.push(
+      `  SCRIPT — ${midWord} of ${total} Hebrew word(s) have a final letter where no ` +
+      `real Hebrew word puts one:`);
+    lines.push('    a smoke detector, not a diagnosis — an unusual page of codes or');
+    lines.push('    account numbers can trip it too. Nothing else here would catch a');
+    lines.push('    glyph mapped to the wrong character; this might. Read a few words.');
+  }
+
   // Vacuous where there was no text to lose, and actively misleading next to a page
   // count that says every page was a picture.
   if (passed(result) && result.lines) lines.push('  No text lost, no number changed.');
@@ -548,6 +597,9 @@ function reportJson(result, { source }) {
     // Pages that read fine and are still incomplete, which is the quieter half of the
     // same question and the one no exit code will ever raise.
     illustrations: result.illustrations,
+    // Null where nothing tripped it, never omitted — a caller diffing two runs should
+    // not have to treat a missing key and an absent warning as different things.
+    scrambledScript: result.scrambledScript,
     pages: result.pages,
     // Untruncated, unlike the prose report: a list cut off at eight is a summary, and
     // a caller comparing two runs needs all of it.
@@ -569,7 +621,7 @@ const passed = result =>
 module.exports = {
   verify, report, reportJson, passed,
   _internals: {
-    renderedText, numberCounts, normalise, readPage, digest, illustrations,
-    MIN_ILLUSTRATION_SHARE, MIN_ILLUSTRATION_PIXELS,
+    renderedText, numberCounts, normalise, readPage, digest, illustrations, scrambledScript,
+    MIN_ILLUSTRATION_SHARE, MIN_ILLUSTRATION_PIXELS, SCRAMBLED_SCRIPT_RATE,
   },
 };
