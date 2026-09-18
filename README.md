@@ -125,6 +125,68 @@ Arabic uses the same code paths and is detected by the same Unicode ranges, but 
 scrambled-text check **cannot detect scrambled Arabic** — the signal reads Hebrew final
 forms, which no other script has. The conversion says so rather than reporting clean.
 
+## Versus OCR
+
+**OCR reads pixels. This reads the file.** A PDF with a text layer already contains the
+characters its author wrote; OCR discards them and guesses the same text back from an
+image of itself. Where that layer exists, four things follow.
+
+**The characters are certain rather than probable.** OCR has a character error rate;
+a mapped glyph does not. On a statement that is the difference between `0.10` and `10`,
+and **a wrong digit in a balance is undetectable** — no check catches it, because the
+result is still a plausible number. Hebrew makes it worse: OCR accuracy on Hebrew is
+well below Latin.
+
+**The structure is declared, not inferred.** A tagged PDF states its paragraphs, lists
+and table cells, and this reads them — the letters and contracts tested here came back
+at 0.999 and 1.000 [coverage](#tables). OCR sees ink, so any structure it reports is
+re-guessed from the layout.
+
+**It can be checked.** This is the part with no OCR equivalent. [`--verify`](#checking-a-conversion)
+compares the output against the file's own text layer. With OCR the image is the only
+source and its reading is the only output — there is nothing to hold it against, so
+nothing can tell you whether 73 numbered clauses came back correctly numbered.
+
+**Scrambled Hebrew is caught.** A PDF can hand back Hebrew in visual order; that is
+[detected and refused](#hebrew-and-rtl-documents). OCR returns visually-ordered text with
+no warning at all, and it looks like Hebrew.
+
+### Where OCR wins
+
+**When there is no text layer.** A scan, or a deck exported as pictures. This refuses
+with exit 4 and points at `ocrmypdf` — division of labour, not failure.
+
+**When the text layer is wrong.** A font whose tables say `א` where the page shows `ב`
+gives complete, confident, wrong text here. OCR would read it correctly, because it
+looks at what is drawn.
+
+**Text inside images.** A chart, a screenshot or a signature block pasted into an
+otherwise-readable PDF holds text that is not in the text layer at all. This does not
+read it, and `--verify` cannot report it missing, because neither side of that
+comparison can see it either.
+
+A page that draws an image and holds no text is at least named, since that page is one
+this cannot read at all:
+
+```
+  PICTURE ONLY — page(s) 3, 4 draw an image and hold no text.
+    Their words are not in the text layer, so nothing here can read them
+    or report them missing. OCR the document if those pages matter.
+```
+
+It is reported, not failed — a cover page or a full-page diagram is not a defect, and
+only you know whether those pages carry anything you need. A screenshot sitting *among*
+paragraphs is still invisible: the page has text, so nothing marks it.
+
+### The order worth following
+
+1. An original `.docx` or `.pptx` if one exists — most reliable of all.
+2. Otherwise this, with `--verify`.
+3. No text layer? `ocrmypdf -l heb+eng`, then this on the result.
+
+At step 3, know what the check still means: it verifies the conversion against what OCR
+produced, not against the page. Faithful rendering of an uncertain reading. Read it.
+
 ## Hebrew and RTL documents
 
 Hebrew converts correctly, including from PDF. If you hit the scrambled-text error,

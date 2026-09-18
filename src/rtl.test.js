@@ -311,17 +311,17 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
 // other check here compares two sides that agree about text neither of them has.
 {
   const { verify: v } = { verify: require('./verify') };
-  const OPS = { showText: 44 };
+  const OPS = { showText: 44, paintImage: 85 };
   const glyphs = list => ({ fnArray: [OPS.showText], argsArray: [[list]] });
   const g = unicode => ({ unicode });
 
-  assert(v._internals.unmappedGlyphs(glyphs([g('ש'), g('ל'), g('ו'), g('ם')]), OPS) === 0,
+  assert(v._internals.readPage(glyphs([g('ש'), g('ל'), g('ו'), g('ם')]), OPS).unmapped === 0,
     'a page whose glyphs all carry a character reports nothing');
-  assert(v._internals.unmappedGlyphs(glyphs([g('1'), g(''), g('0'), g('�')]), OPS) === 2,
+  assert(v._internals.readPage(glyphs([g('1'), g(''), g('0'), g('�')]), OPS).unmapped === 2,
     'a glyph with no character, and one that decoded to the replacement, both count');
 
   // Positioning adjustments sit in the same array as the glyphs and are not glyphs.
-  assert(v._internals.unmappedGlyphs(glyphs([g('א'), -250, g('ב')]), OPS) === 0,
+  assert(v._internals.readPage(glyphs([g('א'), -250, g('ב')]), OPS).unmapped === 0,
     'the kerning numbers between glyphs must not be counted as undecoded ones');
 
   // The verdict has to carry it, or the report would note it under a clean pass.
@@ -331,6 +331,17 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
     'a single undecoded glyph is text the reader can see and the output cannot hold');
   assert(/UNDECODED/.test(v.report({ ...clean, undecoded: 3, lines: 9, fromPage: true }, { name: 'x' })),
     'and the report names it');
+
+  // Images ride the same pass. A page that draws one and holds no text is a page this
+  // cannot read at all — the one case where OCR does better, so it is said plainly.
+  const painted = { fnArray: [OPS.paintImage, OPS.showText], argsArray: [[], [[g('א')]]] };
+  assert(v._internals.readPage(painted, { ...OPS, paintImageXObject: OPS.paintImage }).images === 1,
+    'a painted image is counted');
+  assert(v.passed({ ...clean, pictures: [3, 4] }),
+    'a page that is only a picture does not fail the run — a cover page is not a defect');
+  const noted = v.report({ ...clean, pictures: [3, 4], lines: 9, fromPage: true }, { name: 'x' });
+  assert(/PICTURE ONLY — page\(s\) 3, 4/.test(noted) && /OCR/.test(noted),
+    `but the report names the pages and points at OCR — got:\n${noted}`);
 }
 
 // --pages accepts single pages, ranges and lists, and rejects nonsense

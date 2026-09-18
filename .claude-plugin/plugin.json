@@ -1,7 +1,7 @@
 {
   "name": "anydoc",
   "displayName": "anydoc — document conversion with RTL",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Lets your agent read Hebrew documents. Most extractors return Hebrew with every word reversed — it still looks like Hebrew, and it is wrong. Converts PDF, Word, PowerPoint, Excel, OpenDocument, EPUB, RTF and CSV to Markdown and to a standalone HTML page, in reading order, and checks the result against the page it came from.",
   "author": {
     "name": "Amit Rosen"
