@@ -24,5 +24,5 @@ lang: he
 </div>
 
 --- verification ---
-Verified renumbered-notes.pptx: 6 extracted lines reached the output (no page to read back — extraction itself is unchecked).
+Verified renumbered-notes.pptx: 4 lines of page text.
   No text lost, no number changed.

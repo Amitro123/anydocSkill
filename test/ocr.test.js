@@ -171,4 +171,82 @@ const mixed = () => fx.writeMixedPdf(dir, [PAGE1, null], `mixed-${Date.now()}-${
     'output is still written — the rest of the document is fine');
 }
 
+// --- The .pptx path: no picture-only slide has anything to OCR ---
+{
+  const deck = fx.writePptx(dir);
+  const out = path.join(dir, 'pptx-nothing-out');
+  const result = run([deck, '--out-dir', out]);
+  assert.strictEqual(result.status, 0, `a deck with no picture-only slide needs no tools: ${result.stderr}`);
+  assert(/Nothing here for OCR to do/.test(result.stdout));
+  assert(/every slide/.test(result.stdout), 'the wording says slide, not page, for a deck');
+  assert(!fs.existsSync(out));
+}
+
+// --- A clean .pptx OCR pass: the real slide reads exactly as it always did, the
+// picture-only slide holds its own transcript under its own heading, nothing else
+// changes — the same guarantee as the PDF path, reached without rebuilding the .pptx
+// at all (see ocr.js's own comment on why the two paths differ here). ---
+{
+  const deck = fx.writePictureSlidePptx(dir);
+  const out = path.join(dir, 'pptx-clean-out');
+  const before = scratchDirs().length;
+  const result = run([deck, '--out-dir', out, '--format', 'md'],
+    withFakeTools({ 2: 'טקסט שחולץ מהתמונה' }));
+
+  assert.strictEqual(result.status, 0, `expected success: ${result.stderr}`);
+  assert.strictEqual(scratchDirs().length, before,
+    'a successful pptx run must not leave its scratch directory behind either');
+  assert(/Slide\(s\) 2 have no text layer/.test(result.stdout));
+  assert(/OCR added a text layer to 1 page\(s\): 2/.test(result.stdout));
+  assert(/guess, not a reading/.test(result.stdout));
+
+  const md = fs.readFileSync(path.join(out, path.basename(deck, '.pptx') + '.md'), 'utf8');
+  assert(md.includes('שקופית עם טקסט'), 'the slide that already had text reaches the output unchanged');
+  assert(md.includes('טקסט שחולץ מהתמונה'), 'and the OCR transcript is under the picture-only slide');
+  assert(/<!-- Slide 2 OCR -->/.test(md), 'marked the same way a recovered PDF page is marked as a guess');
+
+  const report = JSON.parse(
+    fs.readFileSync(path.join(out, path.basename(deck, '.pptx') + '.ocr-report.json'), 'utf8'));
+  assert.strictEqual(report.schema, 1);
+  assert.deepStrictEqual(report.recovered, [2]);
+  assert.deepStrictEqual(report.provenance, { 1: 'original', 2: 'ocr' });
+}
+
+// --- Still unreadable: OCR ran on the slide's own picture and found nothing. ---
+{
+  const deck = fx.writePictureSlidePptx(dir);
+  const out = path.join(dir, 'pptx-still-out');
+  const result = run([deck, '--out-dir', out, '--format', 'md'], withFakeTools({}));
+
+  assert.strictEqual(result.status, 0, `expected success: ${result.stderr}`);
+  assert(/STILL UNREADABLE/.test(result.stdout));
+  const md = fs.readFileSync(path.join(out, path.basename(deck, '.pptx') + '.md'), 'utf8');
+  assert(md.includes('_(שקופית ללא טקסט)_') || md.includes('(no text on this slide)'),
+    'a slide OCR could not read falls back to the same empty-slide placeholder as always');
+}
+
+// --- OCR itself failing on a slide's picture is an ordinary failure, not a silent
+// no-op, same as the PDF path. ---
+{
+  const deck = fx.writePictureSlidePptx(dir);
+  const out = path.join(dir, 'pptx-fail-out');
+  const before = scratchDirs().length;
+  const env = withFakeTools({ 2: 'irrelevant' });
+  env.FAKE_OCR_FAIL = 'tesseract crashed';
+  const result = run([deck, '--out-dir', out, '--format', 'md'], env);
+
+  assert.strictEqual(result.status, 1);
+  assert(/ocrmypdf failed/.test(result.stderr));
+  assert(!fs.existsSync(out));
+  assert.strictEqual(scratchDirs().length, before);
+}
+
+// --- A format this tool has no business touching is still refused outright. ---
+{
+  const csv = fx.writeCsv(dir);
+  const result = run([csv, '--out-dir', path.join(dir, 'csv-out')]);
+  assert.strictEqual(result.status, 1);
+  assert(/is not a PDF or a PowerPoint deck/.test(result.stderr));
+}
+
 console.log('All OCR pipeline tests passed.');

@@ -121,9 +121,12 @@ function documentCss(dir) {
  * Notes are emitted as one blockquote with no nesting, so matching the first
  * closing tag is exact rather than a guess at balance.
  */
-// The one marker this tool writes into the Markdown itself, which the renderer below
-// has to let through so slideNotesToAsides can turn it into an <aside>.
-const SLIDE_NOTES_MARKER = /^<!-- Slide \d+ notes -->$/;
+// The markers this tool writes into the Markdown itself, which the renderer below has
+// to let through rather than escape like any other raw HTML a document might carry —
+// the notes one so slideNotesToAsides can turn it into an <aside>, the OCR one so it
+// stays a plain, inert comment marking which slide's text is a guess rather than a
+// reading, addressable the same way the notes marker already is.
+const SLIDE_MARKER = /^<!-- Slide \d+ (?:notes|OCR) -->$/;
 
 /**
  * Render Markdown with every raw tag escaped to text.
@@ -141,7 +144,7 @@ const renderer = new Marked({
   gfm: true,
   breaks: false,
   renderer: {
-    html: token => (SLIDE_NOTES_MARKER.test(token.text.trim())
+    html: token => (SLIDE_MARKER.test(token.text.trim())
       ? token.text
       : escapeHtml(token.text)),
   },

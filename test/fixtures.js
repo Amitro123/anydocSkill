@@ -177,6 +177,54 @@ function writeRenumberedNotesPptx(dir) {
   return file;
 }
 
+// A minimal valid 1x1 PNG — real bytes for a real media part, since anydoc-ocr reads
+// this file off disk and hands it to ocrmypdf; what it draws does not matter to any
+// test here, since the fake ocrmypdf stub never looks at pixels.
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64');
+
+/**
+ * A deck with one ordinary slide and one picture-only slide — a slide holding an
+ * inserted picture and no text of its own, the one shape anydoc-ocr looks for. Slide 2
+ * has a real <p:pic> shape, a relationship from its own .rels to the media part, and a
+ * genuine (if trivial) image behind that relationship — the same chain a real deck
+ * exported as images per-slide would carry.
+ */
+function writePictureSlidePptx(dir) {
+  const textSlide = body =>
+    `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+    `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+    `<p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>` +
+    `<p:txBody><a:p><a:r><a:t>${body}</a:t></a:r></a:p></p:txBody></p:sp>` +
+    `</p:spTree></p:cSld></p:sld>`;
+
+  const pictureSlide =
+    `<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" ` +
+    `xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
+    `xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>` +
+    `<p:pic><p:nvPicPr><p:nvPr/></p:nvPicPr>` +
+    `<p:blipFill><a:blip r:embed="rId1"/></p:blipFill>` +
+    `<p:spPr/></p:pic>` +
+    `</p:spTree></p:cSld></p:sld>`;
+
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>` +
+    `</Relationships>`;
+
+  const zip = new AdmZip();
+  zip.addFile('ppt/slides/slide1.xml', Buffer.from(textSlide('שקופית עם טקסט')));
+  zip.addFile('ppt/slides/slide2.xml', Buffer.from(pictureSlide));
+  zip.addFile('ppt/slides/_rels/slide2.xml.rels', Buffer.from(rels));
+  zip.addFile('ppt/media/image1.png', TINY_PNG);
+
+  const file = path.join(dir, 'picture-slide.pptx');
+  zip.writeZip(file);
+  return file;
+}
+
 const PDF_LINES = [
   [72, 720, 'Mediation Agreement'],
   [72, 700, 'Case number 123456-01-26'],
@@ -787,6 +835,7 @@ function writeCorpus(dir) {
     writeMixedScriptDoc(dir),
     writeScrambledScriptDoc(dir),
     writeRenumberedNotesPptx(dir),
+    writePictureSlidePptx(dir),
     ...writeMalformedFixtures(dir),
   ];
 }
@@ -797,5 +846,5 @@ module.exports = {
   writeMultiPagePdf, writeLaidOutPdf, writeInvoicePdf, writeTicketsPdf, writeNumberedPdf,
   writeStatementPdf, writeRunningHeaderColumnsPdf, writeIllustratedPdf, writeMixedPdf,
   writeSizedHeadingsPdf, writeMalformedFixtures, writeMixedScriptDoc, writeScrambledScriptDoc,
-  writeRenumberedNotesPptx,
+  writeRenumberedNotesPptx, writePictureSlidePptx,
 };

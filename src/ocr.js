@@ -1,37 +1,41 @@
 #!/usr/bin/env node
 /**
- * OCR the pages anydoc could not read, then hand the result back through anydoc so the
- * same checks apply to the text OCR produced.
+ * OCR the pages or slides anydoc could not read, then hand the result back through
+ * anydoc so the same checks apply to the text OCR produced.
  *
  * This is not part of anydoc, and deliberately so. anydoc's whole guarantee rests on
  * `--verify` comparing output against a page's own text layer; the moment that layer is
  * a guess instead of what the document's author wrote, the comparison is against a guess
  * and nothing says so on its own. Keeping this separate keeps that guarantee legible:
  * anydoc still means exactly what it always meant on every page it reads itself, and a
- * page that went through this tool instead is named as having gone through it, in both
- * the prose and the JSON this writes alongside anydoc's own output.
+ * page or slide that went through this tool instead is named as having gone through it,
+ * in both the prose and the JSON this writes alongside anydoc's own output.
  *
  * What this refuses to do is the more important half. OCR only ever runs on the pages
- * anydoc's own --report already named PICTURE ONLY, one page at a time, restricted
- * there by ocrmypdf's own --pages and --skip-text (see src/ocr-args.js). ocrmypdf's own
- * output PDF is never read for its text — its embedded OCR text layer is exactly what
- * came back character-reversed on a real Hebrew scan tested against this, where its
- * plain --sidecar transcript did not, so the transcript is what gets used, drawn onto a
- * fresh page of this project's own making (src/ocr-pdf.js) rather than trusted as-is.
- * The result is checked again afterwards — see src/reconcile.js — before anything is
- * written to the real output directory: a page that already had a text layer must come
- * back with the exact same one, or nothing here is written at all. Re-guessing a page
- * that was already read correctly is the failure this whole project exists to catch,
- * and this tool is not exempt from that just because it is the one calling OCR.
+ * or slides anydoc's own --report already named PICTURE ONLY, one at a time, restricted
+ * there by ocrmypdf's own --pages and --skip-text on a PDF (see src/ocr-args.js) or,
+ * for a .pptx, by extracting only that slide's own picture from the deck's own zip.
+ * ocrmypdf's own output PDF is never read for its text — its embedded OCR text layer is
+ * exactly what came back character-reversed on a real Hebrew scan tested against this,
+ * where its plain --sidecar transcript did not, so the transcript is what gets used —
+ * drawn onto a fresh PDF page of this project's own making for a PDF (src/ocr-pdf.js),
+ * or spliced into the Markdown under the slide's own heading for a .pptx, rather than
+ * trusted as-is either way. The result is checked again afterwards — see
+ * src/reconcile.js — before anything is written to the real output directory: a page or
+ * slide that already had real text must come back with the exact same text, or nothing
+ * here is written at all. Re-guessing something that was already read correctly is the
+ * failure this whole project exists to catch, and this tool is not exempt from that
+ * just because it is the one calling OCR.
  *
  * Usage:
- *   node src/ocr.js <input.pdf> [--out-dir <dir>] [--lang heb+eng] [--format md|html|both]
+ *   node src/ocr.js <input.pdf|input.pptx> [--out-dir <dir>] [--lang heb+eng]
+ *                    [--format md|html|both]
  *
  * Exit codes:
  *   0  done — OCR ran and reconciled cleanly, or there was nothing here for it to do
- *   1  ordinary failure (bad arguments, missing file, not a PDF, ocrmypdf itself errored)
+ *   1  ordinary failure (bad arguments, missing file, wrong format, ocrmypdf itself errored)
  *   5  ocrmypdf or a needed tesseract language is not installed
- *   6  OCR changed a page it was not asked to touch — refused to use the result
+ *   6  OCR changed a page or slide it was not asked to touch — refused to use the result
  */
 
 const EXIT_FAILURE = 1;
@@ -166,15 +170,55 @@ function ocrPage(inputPath, page, lang, work) {
   return parseSidecar(fs.readFileSync(sidecar, 'utf8'));
 }
 
+/**
+ * OCR every picture on one picture-only slide and return their transcripts joined as
+ * separate paragraphs. Almost always exactly one image; a slide can carry more than
+ * one, and none of them has a page number of its own to restrict a run to the way a
+ * PDF page does.
+ *
+ * Each is wrapped as its own one-page PDF first (src/ocr-pdf.js's wrapImageAsPdf) and
+ * OCR'd the same way a PDF page already is, rather than handed to ocrmypdf as a bare
+ * image — confirmed against a real deck to be necessary, not a defensive guess: a bare
+ * image without scanner-style DPI metadata, or with a PNG's alpha channel, is refused
+ * outright before the wrap, and a wrapped one page's worth of PDF is exactly what
+ * buildSidecarOcrArgs already knows how to OCR.
+ */
+async function ocrSlideImages(images, slideNumber, lang, work) {
+  const { wrapImageAsPdf } = require('./ocr-pdf');
+  const texts = [];
+  for (let i = 0; i < images.length; i++) {
+    const image = images[i];
+    const ext = path.extname(image.entryName) || '.png';
+    const pdfBytes = await wrapImageAsPdf(image.data, ext);
+    const inputPdf = path.join(work, `s${slideNumber}-${i}.pdf`);
+    fs.writeFileSync(inputPdf, pdfBytes);
+
+    const throwaway = path.join(work, `s${slideNumber}-${i}-ocr.pdf`);
+    const sidecar = path.join(work, `s${slideNumber}-${i}.sidecar.txt`);
+    const result = spawnSync('ocrmypdf', buildSidecarOcrArgs(inputPdf, throwaway, sidecar, 1, lang),
+      { encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(
+        `ocrmypdf failed on slide ${slideNumber}'s picture (exit ${result.status}):\n\n` +
+        `${(result.stderr || result.stdout || '').trim()}`
+      );
+    }
+    texts.push(parseSidecar(fs.readFileSync(sidecar, 'utf8')));
+  }
+  return texts.filter(Boolean).join('\n\n');
+}
+
 async function run({ input, outDir, lang, format }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
-  if (path.extname(input).toLowerCase() !== '.pdf') {
+  const ext = path.extname(input).toLowerCase();
+  if (ext !== '.pdf' && ext !== '.pptx') {
     throw new Error(
-      `${path.basename(input)} is not a PDF. OCR only applies to the pages of a PDF ` +
-      `anydoc reports as PICTURE ONLY — every other format either has no such concept ` +
-      `or is better converted from its own source than from a scan of it.`
+      `${path.basename(input)} is not a PDF or a PowerPoint deck. OCR only applies to ` +
+      `pages or slides anydoc reports as PICTURE ONLY — every other format either has ` +
+      `no such concept or is better converted from its own source than from a scan of it.`
     );
   }
+  const unit = ext === '.pdf' ? 'page' : 'slide';
 
   const title = path.basename(input, path.extname(input));
   const work = scratchDir();
@@ -198,16 +242,17 @@ async function run({ input, outDir, lang, format }) {
     if (!pictureOnly.length) {
       if (illustrated.length) {
         console.log(
-          `Nothing here for OCR to safely do. Page(s) ${illustrated.join(', ')} carry a ` +
-          `large image, but they already have a text layer — OCR-ing them would mean ` +
-          `redoing the whole page and risking the text that already reads correctly, ` +
-          `which this refuses to do. Read those pages directly if they matter.\n\n` +
+          `Nothing here for OCR to safely do. ${unit === 'page' ? 'Page' : 'Slide'}(s) ` +
+          `${illustrated.join(', ')} carry a large image, but they already have a text ` +
+          `layer — OCR-ing them would mean redoing the whole ${unit} and risking the text ` +
+          `that already reads correctly, which this refuses to do. Read those ${unit}s ` +
+          `directly if they matter.\n\n` +
           `Run anydoc on ${path.basename(input)} directly; it already reads everything ` +
           `this tool would otherwise add.`
         );
       } else {
         console.log(
-          `Nothing here for OCR to do — anydoc already read every page of ` +
+          `Nothing here for OCR to do — anydoc already read every ${unit} of ` +
           `${path.basename(input)}. Run it directly; there is nothing this adds.`
         );
       }
@@ -219,30 +264,53 @@ async function run({ input, outDir, lang, format }) {
     requireTools(lang);
 
     console.log(
-      `Page(s) ${pictureOnly.join(', ')} have no text layer. Running OCR on ` +
-      `${pictureOnly.length === 1 ? 'that page' : 'those pages'} only (${lang}) — every ` +
-      `other page is left exactly as anydoc already read it.`
+      `${unit === 'page' ? 'Page' : 'Slide'}(s) ${pictureOnly.join(', ')} have no text ` +
+      `layer. Running OCR on ${pictureOnly.length === 1 ? `that ${unit}` : `those ${unit}s`} ` +
+      `only (${lang}) — every other ${unit} is left exactly as anydoc already read it.`
     );
 
-    const sizes = await pageSizes(input, pictureOnly);
-    const transcripts = pictureOnly.map(page => ({
-      ...sizes.get(page),
-      text: ocrPage(input, page, lang, work),
-    }));
-
-    const { buildCorrectedPdf, assembleFinalPdf } = require('./ocr-pdf');
-    const correctedBytes = await buildCorrectedPdf(transcripts);
-    const finalBytes = await assembleFinalPdf(input, correctedBytes, pictureOnly);
-    const finalPdf = path.join(work, `${title}.pdf`);
-    fs.writeFileSync(finalPdf, finalBytes);
-
-    // The second read, over the assembled document — every page anydoc already read
-    // untouched, the recovered pages holding exactly their own transcript — through
-    // exactly the same checks as any other conversion.
     const afterDir = path.join(work, 'after');
-    const after = convert(
-      [finalPdf, '--format', format, '--out-dir', afterDir, '--verify'],
-      path.join(work, 'after.json'));
+    let after;
+
+    if (ext === '.pdf') {
+      const sizes = await pageSizes(input, pictureOnly);
+      const transcripts = pictureOnly.map(page => ({
+        ...sizes.get(page),
+        text: ocrPage(input, page, lang, work),
+      }));
+
+      const { buildCorrectedPdf, assembleFinalPdf } = require('./ocr-pdf');
+      const correctedBytes = await buildCorrectedPdf(transcripts);
+      const finalBytes = await assembleFinalPdf(input, correctedBytes, pictureOnly);
+      const finalPdf = path.join(work, `${title}.pdf`);
+      fs.writeFileSync(finalPdf, finalBytes);
+
+      // The second read, over the assembled document — every page anydoc already read
+      // untouched, the recovered pages holding exactly their own transcript — through
+      // exactly the same checks as any other conversion.
+      after = convert(
+        [finalPdf, '--format', format, '--out-dir', afterDir, '--verify'],
+        path.join(work, 'after.json'));
+    } else {
+      // Unlike a PDF, nothing here rebuilds the .pptx — a slide's own picture stays
+      // exactly where it was, and only the Markdown convert.js renders from it changes.
+      // The second read goes back to the same, untouched input, with the recovered text
+      // for each slide passed alongside it — --ocr-slides is what tells convert.js (and
+      // its own independent verify() pass) to splice that text in this one time, rather
+      // than reading it back out of a document that was never written to.
+      const { pptxSlideImages } = require('./pptx-extract');
+      const images = await pptxSlideImages(input, pictureOnly);
+      const ocrSlides = {};
+      for (const slide of pictureOnly) {
+        ocrSlides[slide] = await ocrSlideImages(images.get(slide) || [], slide, lang, work);
+      }
+      const ocrSlidesPath = path.join(work, 'ocr-slides.json');
+      fs.writeFileSync(ocrSlidesPath, JSON.stringify(ocrSlides), 'utf8');
+
+      after = convert(
+        [input, '--format', format, '--out-dir', afterDir, '--verify', '--ocr-slides', ocrSlidesPath],
+        path.join(work, 'after.json'));
+    }
 
     const { reconcile, reconcileReport } = require('./reconcile');
     const result = reconcile(before.report, after.report);
@@ -299,7 +367,7 @@ if (require.main === module) {
     process.exit(EXIT_FAILURE);
   }
   if (!args.input) {
-    console.error('Usage: node src/ocr.js <input.pdf> [--out-dir <dir>] ' +
+    console.error('Usage: node src/ocr.js <input.pdf|input.pptx> [--out-dir <dir>] ' +
                   '[--lang heb+eng] [--format md|html|both]');
     process.exit(EXIT_FAILURE);
   }

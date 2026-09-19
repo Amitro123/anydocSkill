@@ -283,6 +283,26 @@ what it reports on any clean document: no text lost, no number changed.
 Neither `ocrmypdf` nor Tesseract's Hebrew language data ship with this project. Missing
 either exits 5 and names the exact install command for the platform it's running on.
 
+**The same tool covers a picture-only PowerPoint slide**, one of a deck's slides
+exported as an image with no text of its own — `node src/ocr.js deck.pptx`. The
+mechanism differs where the format does: a `.pptx` is never rewritten at all, since
+there is no PDF-style "page" to swap out — instead, the picture is extracted straight
+from the slide's own relationships (the same `.rels` link that already resolves speaker
+notes). ocrmypdf never sees that picture directly, either: a bare image needs scanner-
+style DPI metadata it essentially never has when it was pasted or exported from a slide,
+and separately, ocrmypdf refuses one with an alpha channel outright, which a PNG export
+commonly carries — both found on a real deck, not anticipated. So the picture is wrapped
+as its own one-page PDF first, drawn onto an opaque white background, and OCR'd through
+the exact same invocation a PDF page already is. The transcript is spliced into that
+slide's Markdown section, marked the same way a recovered PDF page is: a guess, not a
+reading. The reconciliation guarantee holds exactly the same way — every other slide's
+real text is read back and compared, unchanged, before anything is written.
+
+Run for real against a 34-slide deck in this project's private corpus, it correctly
+named the one picture-only slide out of 34, recovered legible Hebrew
+(`הטלוויזיה של ישראל`, `קשת עם 8 התוכניות המובילות...`), and confirmed the other 33
+slides byte-for-byte unchanged.
+
 ## Hebrew and RTL documents
 
 Hebrew converts correctly, including from PDF. If you hit the scrambled-text error,

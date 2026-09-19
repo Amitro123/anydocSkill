@@ -121,4 +121,42 @@ async function assembleFinalPdf(originalPath, correctedBytes, pictureOnly) {
   return final.save();
 }
 
-module.exports = { buildCorrectedPdf, assembleFinalPdf, _internals: { wrap, FONT_PATH } };
+/**
+ * Wrap one picture as a one-page PDF, sized to its own pixel dimensions, for ocrmypdf
+ * to OCR the same way it already OCRs a PDF page.
+ *
+ * A picture extracted from a slide is handed to ocrmypdf as a bare image, not a PDF —
+ * and that turned out to need this step, confirmed against a real deck: ocrmypdf
+ * refuses a bare image outright unless it already carries scanner-style DPI metadata,
+ * which one pasted or exported from a slide essentially never does, and separately
+ * refuses one with an alpha channel, which a PNG export commonly has. A PDF page has
+ * its own explicit size instead of a DPI to guess, and drawing the image onto an opaque
+ * white background before ocrmypdf ever rasterises it leaves no alpha channel to
+ * complain about — both fixed by never handing it a bare image at all.
+ */
+async function wrapImageAsPdf(imageBytes, ext) {
+  if (!/\.(png|jpe?g)$/i.test(ext)) {
+    throw new Error(
+      `Cannot OCR a picture in ${ext || 'an unknown'} format — only PNG and JPEG are ` +
+      `supported. Export the slide's picture as one of those and try again.`
+    );
+  }
+
+  const doc = await PDFDocument.create();
+  const isJpeg = /\.jpe?g$/i.test(ext);
+  const image = isJpeg ? await doc.embedJpg(imageBytes) : await doc.embedPng(imageBytes);
+
+  const page = doc.addPage([image.width, image.height]);
+  // The alpha channel a PNG can carry has to composite against *something* before
+  // rasterisation, or ocrmypdf refuses it outright — white matches what a slide's own
+  // background almost always is, and is the one choice that never makes text harder
+  // to read than the slide itself did.
+  page.drawRectangle({ x: 0, y: 0, width: image.width, height: image.height, color: rgb(1, 1, 1) });
+  page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+
+  return doc.save();
+}
+
+module.exports = {
+  buildCorrectedPdf, assembleFinalPdf, wrapImageAsPdf, _internals: { wrap, FONT_PATH },
+};

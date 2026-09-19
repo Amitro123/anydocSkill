@@ -29,8 +29,11 @@ const { preserveNumbering } = require('./numbering');
 const { renderHtml } = require('./render-html');
 const { parsePageSpec } = require('./convert-args');
 
-const FLAGS = ['--format', '--out-dir', '--pages', '--force', '--ingest', '--verify', '--report'];
-const VALUED = new Set(['--format', '--out-dir', '--pages', '--report']);
+const FLAGS = [
+  '--format', '--out-dir', '--pages', '--force', '--ingest', '--verify', '--report',
+  '--ocr-slides',
+];
+const VALUED = new Set(['--format', '--out-dir', '--pages', '--report', '--ocr-slides']);
 
 /**
  * Parse the command line, refusing anything it does not recognise.
@@ -43,6 +46,7 @@ function parseArgs(argv) {
   const args = {
     format: 'both', outDir: null, input: null,
     force: false, ingest: false, pages: null, verify: false, report: null,
+    ocrSlides: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -66,6 +70,7 @@ function parseArgs(argv) {
       else if (arg === '--out-dir') args.outDir = argv[++i];
       else if (arg === '--pages') args.pages = parsePageSpec(argv[++i]);
       else if (arg === '--report') args.report = argv[++i];
+      else if (arg === '--ocr-slides') args.ocrSlides = argv[++i];
       else args[arg.slice(2)] = true;
       continue;
     }
@@ -95,7 +100,7 @@ function writeFileAtomic(destPath, content) {
   fs.renameSync(tmpPath, destPath);
 }
 
-async function toMarkdown(inputPath, pages = null) {
+async function toMarkdown(inputPath, { pages = null, ocrSlides = null } = {}) {
   const ext = path.extname(inputPath).toLowerCase();
 
   // Only PDFs are paginated here. Silently ignoring the flag on anything else
@@ -123,7 +128,11 @@ async function toMarkdown(inputPath, pages = null) {
   // slide boundaries.
   if (ext === '.pptx') {
     const { pptxToMarkdown } = require('./pptx-extract');
-    return pptxToMarkdown(inputPath);
+    // ocrSlides is internal, set only by anydoc-ocr's own second pass: recovered text
+    // (slide number -> transcript) for the picture-only slides it just OCR'd. Not part
+    // of the documented CLI surface — a person converting a deck never has a reason to
+    // pass it themselves.
+    return pptxToMarkdown(inputPath, { ocrSlides });
   }
 
   let toMarkdown;
@@ -141,6 +150,7 @@ async function toMarkdown(inputPath, pages = null) {
 
 async function convert({
   input, format, outDir, force, ingest, pages, verify: shouldVerify, report: reportPath,
+  ocrSlides,
 }) {
   if (!fs.existsSync(input)) throw new Error(`No such file: ${input}`);
 
@@ -154,7 +164,14 @@ async function convert({
   const toStdout = reportPath === '-';
   const say = toStdout ? console.error : console.log;
 
-  const raw = await toMarkdown(input, pages);
+  // Parsed once and handed to both toMarkdown and verify below — the Markdown needs it
+  // spliced in, and verify needs the same recovered text or it would forever re-read
+  // the untouched source and report an OCR'd slide as still picture-only.
+  const ocrSlidesMap = ocrSlides
+    ? new Map(Object.entries(JSON.parse(fs.readFileSync(ocrSlides, 'utf8'))).map(([n, text]) => [Number(n), text]))
+    : null;
+
+  const raw = await toMarkdown(input, { pages, ocrSlides: ocrSlidesMap });
 
   // A PDF that was scanned but never OCR'd has no text layer, so extraction succeeds
   // and returns nothing. Writing the empty document and reporting success is the
@@ -244,7 +261,7 @@ async function convert({
   if (!shouldVerify && !reportPath) return;
 
   const { verify, report, reportJson, passed } = require('./verify');
-  const result = await verify(input, { raw, html, pages });
+  const result = await verify(input, { raw, html, pages, ocrSlides: ocrSlidesMap });
 
   if (reportPath) {
     const json = JSON.stringify(reportJson(result, { source: path.basename(input) }), null, 2);

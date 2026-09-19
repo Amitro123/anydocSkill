@@ -310,6 +310,25 @@ assert(!/<!-- Slide 4 notes -->/.test(notesHtml), 'the marker is consumed, not l
 assert(notesHtml.includes('להזכיר את התקציב'), 'notes content survives the rewrite');
 assert(!/<blockquote>[\s\S]*הערות דובר/.test(notesHtml), 'the blockquote is replaced, not duplicated');
 
+// The OCR marker rides the same allowlist as the notes marker — everything else raw
+// HTML in a document is escaped on purpose (see renderer's own doc comment), and this
+// tests that the OCR marker specifically survives while an arbitrary comment does not.
+const ocrMd = [
+  '---', 'dir: rtl', 'lang: he', '---', '',
+  '<div dir="rtl" lang="he">', '',
+  '## שקופית 2', '',
+  '<!-- Slide 2 OCR -->', '**טקסט OCR — לא מאומת:**', '', 'טקסט שחולץ', '',
+  '</div>',
+].join('\n');
+const ocrHtml = renderHtml(ocrMd);
+assert(/<!-- Slide 2 OCR -->/.test(ocrHtml), 'the OCR marker survives as a real comment, not escaped text');
+assert(!/&lt;!--/.test(ocrHtml), 'and specifically is not the escaped form');
+assert(ocrHtml.includes('טקסט שחולץ'), 'and the OCR text itself renders normally');
+
+assert(/&lt;!-- not a real marker --&gt;/.test(renderHtml(
+  '---\ndir: rtl\nlang: he\n---\n\n<!-- not a real marker -->\n\nגוף\n')),
+  'an arbitrary comment that only resembles a marker is still escaped like any other raw HTML');
+
 // pptx labels follow the deck, so an English deck is not labelled in Hebrew
 const { _internals: pptxInternals } = require('./pptx-extract');
 assert(pptxInternals.LABELS.en.slide(3) === 'Slide 3', 'English decks use English labels');
@@ -354,6 +373,60 @@ assert(pptxInternals.LABELS.he.slide(3) === 'שקופית 3', 'Hebrew decks keep
   assert.strictEqual(
     pptxInternals.notesEntryFor('ppt/slides/slide1.xml', byNameAbs, readXmlAbs).entryName,
     'ppt/notesSlides/notesSlide1.xml', 'an absolute Target is read from the package root');
+}
+
+// slideHasPicture / pictureRelIds / slideImages — the same relationship machinery as
+// notes, pointed at a slide's inserted pictures instead: what OCR needs to find a
+// picture-only slide and pull out the bytes to actually OCR.
+{
+  const { slideHasPicture, pictureRelIds, slideImages, parseRelationships } = pptxInternals;
+
+  assert(slideHasPicture('<p:sp/><p:pic><a:blip r:embed="rId2"/></p:pic>'),
+    'a <p:pic> shape is a real inserted picture');
+  assert(!slideHasPicture('<p:sp><a:blip r:embed="rId2"/></p:sp>'),
+    'an image reference outside <p:pic> — a shape fill, say — is not a picture on the slide');
+
+  assert.deepStrictEqual(
+    pictureRelIds('<p:pic><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic>'),
+    ['rId3'], 'the embed id is read out of the picture shape');
+  assert.deepStrictEqual(
+    pictureRelIds('<p:pic><a:blip r:embed="rId1"/></p:pic><p:pic><a:blip r:embed="rId4"/></p:pic>'),
+    ['rId1', 'rId4'], 'multiple pictures on one slide are all found, in document order');
+  assert.deepStrictEqual(pictureRelIds('<p:sp/>'), [], 'a slide with no pictures yields none');
+
+  const relsXmlFor = rels => `<?xml version="1.0"?><Relationships>${rels}</Relationships>`;
+  const rel = (id, type, target) => `<Relationship Id="${id}" Type="${type}" Target="${target}"/>`;
+  const IMG = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+  const LAYOUT = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout';
+
+  assert.deepStrictEqual(
+    parseRelationships(relsXmlFor(rel('rId1', IMG, '../media/image1.png'))),
+    [{ id: 'rId1', type: IMG, target: '../media/image1.png' }]);
+
+  const parts = new Map([
+    ['ppt/slides/_rels/slide2.xml.rels', relsXmlFor(
+      rel('rId1', LAYOUT, '../slideLayouts/slideLayout1.xml') +
+      rel('rId2', IMG, '../media/image1.png'))],
+    ['ppt/media/image1.png', Buffer.from('fake-png-bytes')],
+  ]);
+  const byName = name => (parts.has(name) ? { entryName: name } : undefined);
+  const readXml = entry => (typeof parts.get(entry.entryName) === 'string' ? parts.get(entry.entryName) : '');
+  const readBinary = entry => parts.get(entry.entryName);
+
+  const withPicture = '<p:pic><a:blip r:embed="rId2"/></p:pic>';
+  assert.deepStrictEqual(
+    slideImages('ppt/slides/slide2.xml', withPicture, byName, readXml, readBinary),
+    [{ entryName: 'ppt/media/image1.png', data: Buffer.from('fake-png-bytes') }],
+    'the picture\'s own relationship resolves to the media part\'s bytes');
+
+  assert.deepStrictEqual(
+    slideImages('ppt/slides/slide2.xml', '<p:sp/>', byName, readXml, readBinary), [],
+    'a slide with no <p:pic> shape yields no images, even if the .rels lists one');
+
+  const unrelated = '<p:pic><a:blip r:embed="rId9"/></p:pic>'; // rId9 not in the .rels
+  assert.deepStrictEqual(
+    slideImages('ppt/slides/slide2.xml', unrelated, byName, readXml, readBinary), [],
+    'a picture whose embed id resolves to nothing yields nothing, not a crash');
 }
 
 // An RTL line must be ordered by position, not by the order the producer emitted it.
@@ -640,9 +713,10 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
 {
   const { reconcile, reconcileReport } = require('./reconcile');
 
-  // `lines` mirrors --report's own field: how many lines of text a page holds, which
-  // is the one signal reconcile() actually reads to tell recovered from unreadable.
-  const page = (number, digest, lines = 1) => ({ page: number, digest, lines });
+  // `hasText` mirrors --report's own field — the one signal reconcile() actually reads
+  // to tell recovered from unreadable — derived here from `lines` the same way a PDF
+  // page's own always is, since these fixtures stand in for that shape specifically.
+  const page = (number, digest, lines = 1) => ({ page: number, digest, lines, hasText: lines > 0 });
   const report = (pages, pictureOnly = []) => ({
     totals: { pages: pages.length },
     pictureOnly,
