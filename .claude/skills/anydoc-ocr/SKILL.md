@@ -1,18 +1,18 @@
 ---
 name: anydoc-ocr
-description: Add a text layer, via OCR, to the specific pages of a PDF that anydoc reported as PICTURE ONLY or refused outright for holding no text — a scan, a slide exported as an image, a signed page. Re-runs anydoc on the result and refuses to write anything if OCR changed a page it was not asked to touch. Use only after anydoc itself has already been tried on the document.
-when_to_use: "anydoc's --verify reported PICTURE ONLY page(s), or anydoc refused the whole document with exit code 4 (no text found). Not for a document anydoc has not been run on yet — try anydoc first, always."
+description: Add a text layer, via OCR, to the specific pages of a PDF or slides of a PowerPoint deck that anydoc reported as PICTURE ONLY or refused outright for holding no text — a scan, a slide exported as an image, a signed page. Re-runs anydoc on the result and refuses to write anything if OCR changed a page or slide it was not asked to touch. Use only after anydoc itself has already been tried on the document.
+when_to_use: "anydoc's --verify reported PICTURE ONLY page(s) or slide(s), or anydoc refused the whole document with exit code 4 (no text found). Not for a document anydoc has not been run on yet — try anydoc first, always."
 allowed-tools: Bash, Read, AskUserQuestion
 ---
 
-# anydoc-ocr — OCR for the pages anydoc could not read
+# anydoc-ocr — OCR for the pages or slides anydoc could not read
 
 ## This is not anydoc, and it runs after anydoc, never instead of it
 
 anydoc reads the text a document's author actually wrote. This tool guesses text from
-an image, for the specific pages anydoc already established have none. Try anydoc
-first, always — most documents need nothing this adds, and this tool's own first step
-is running anydoc anyway to find out which pages, if any, actually need it.
+an image, for the specific pages or slides anydoc already established have none. Try
+anydoc first, always — most documents need nothing this adds, and this tool's own first
+step is running anydoc anyway to find out which, if any, actually need it.
 
 Run it when anydoc's report showed one of:
 
@@ -24,7 +24,7 @@ this tool refuses to touch them for the same reason anydoc itself would refuse t
 overwrite good text with a guess — see "What this will not do" below.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/src/ocr.js" <input.pdf> [--out-dir <dir>] [--lang heb+eng]
+node "${CLAUDE_PLUGIN_ROOT}/src/ocr.js" <input.pdf|input.pptx> [--out-dir <dir>] [--lang heb+eng]
 ```
 
 `${CLAUDE_PLUGIN_ROOT}` resolves to the installed plugin directory. Inside this
@@ -32,16 +32,18 @@ repository rather than through an install, use `node src/ocr.js` instead.
 
 ## What it actually does
 
-1. Runs anydoc on the document to see which pages, if any, are PICTURE ONLY.
+1. Runs anydoc on the document to see which pages or slides, if any, are PICTURE ONLY.
 2. If none are, says so and stops — there is nothing here for it to add, and it does
    not touch anything.
-3. Otherwise runs `ocrmypdf`, restricted to exactly those pages. Every other page is
-   passed through untouched.
-4. Runs anydoc again on the result, and compares the two reports page by page. A page
-   that already had text must come back with the exact same text — checked by content
-   digest, not by trusting the OCR tool's own flags.
+3. Otherwise runs `ocrmypdf`, restricted to exactly those pages or, for a .pptx, to
+   exactly that slide's own picture, extracted from the deck itself. Every other page
+   or slide is passed through untouched — a .pptx is never rewritten at all, only the
+   Markdown convert.js renders from it changes.
+4. Runs anydoc again on the result, and compares the two reports page by page (or slide
+   by slide). A page or slide that already had text must come back with the exact same
+   text — checked by content digest, not by trusting the OCR tool's own flags.
 5. Only if that comparison is clean does it write `<title>.md`/`.html` and a
-   `<title>.ocr-report.json` naming which pages came from OCR.
+   `<title>.ocr-report.json` naming which pages or slides came from OCR.
 
 ## What this will not do
 
@@ -60,14 +62,14 @@ such flag here, and that is deliberate.
 
 - **0** — either it finished (report what it found — see below), or there was nothing
   to do. The message on stdout says which.
-- **1** — an ordinary failure: bad arguments, missing file, not a PDF, or `ocrmypdf`
-  itself failed partway through. Read the message and relay it.
+- **1** — an ordinary failure: bad arguments, missing file, not a PDF or PowerPoint
+  deck, or `ocrmypdf` itself failed partway through. Read the message and relay it.
 - **5** — `ocrmypdf` or a needed Tesseract language is not installed. The message names
   the exact install command for the user's platform. Offer to run it if the user wants
   to, but do not run a package-manager install yourself without asking first — see
   "Installing the dependency" below.
-- **6** — OCR changed a page it should not have. Nothing was written. Tell the user
-  plainly what happened; do not try again with different flags, and do not suggest
+- **6** — OCR changed a page or slide it should not have. Nothing was written. Tell the
+  user plainly what happened; do not try again with different flags, and do not suggest
   `--force` — the tool has none, because there is no safe way to override this check.
 
 ## What to tell the user afterwards

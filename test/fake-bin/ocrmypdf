@@ -2,12 +2,17 @@
 /**
  * A stand-in for ocrmypdf, used only by test/ocr.test.js.
  *
- * src/ocr-args.js's buildSidecarOcrArgs restricts every real invocation to one page, so
- * this only has to answer one question: what should the --sidecar transcript for
- * --pages N be? That comes from FAKE_OCR_SIDECAR, a JSON object keyed by page number as
- * a string, an env var each test case sets. A page missing from it gets an empty
- * transcript — OCR ran and found nothing, a real and unremarkable outcome, not a stub
- * bug needing special-casing.
+ * src/ocr-args.js's buildSidecarOcrArgs restricts every real page invocation to one
+ * page, so this only has to answer one question: what should the --sidecar transcript
+ * for --pages N be? That comes from FAKE_OCR_SIDECAR, a JSON object keyed by page (or,
+ * for an image extracted from a slide, slide) number as a string, an env var each test
+ * case sets. A page missing from it gets an empty transcript — OCR ran and found
+ * nothing, a real and unremarkable outcome, not a stub bug needing special-casing.
+ *
+ * buildSidecarImageOcrArgs (the .pptx path) carries no --pages — there is only ever the
+ * one image — so the key comes from the input filename instead: src/ocr.js names each
+ * extracted image s<N>.<ext>, and this reads N back out the same way it would read
+ * --pages if the flag were there.
  *
  * The output PDF this is also asked to write is never read by src/ocr.js — see
  * src/ocr-pdf.js's doc comment for why — so a minimal placeholder is enough to exist at
@@ -26,10 +31,15 @@ if (process.env.FAKE_OCR_FAIL) {
 }
 
 const argv = process.argv.slice(2);
-const page = argv[argv.indexOf('--pages') + 1];
 const sidecarPath = argv[argv.indexOf('--sidecar') + 1];
 const outputPath = argv[argv.length - 1];
+const inputPath = argv[argv.length - 2];
+
+const pagesIndex = argv.indexOf('--pages');
+const key = pagesIndex !== -1
+  ? argv[pagesIndex + 1]
+  : (require('path').basename(inputPath).match(/^s(\d+)/) || [])[1];
 
 const transcripts = JSON.parse(process.env.FAKE_OCR_SIDECAR || '{}');
-fs.writeFileSync(sidecarPath, transcripts[page] || '', 'utf8');
+fs.writeFileSync(sidecarPath, transcripts[key] || '', 'utf8');
 fs.writeFileSync(outputPath, '%PDF-1.4\n%%EOF\n', 'latin1');

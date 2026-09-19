@@ -293,10 +293,34 @@ async function pdfLines(filePath, wanted) {
       // because it is the one case where OCR would do better, and where saying nothing
       // reads as "there was nothing there".
       picture: drawn.images.length > 0 && !text.length,
+      // A PDF page's lines are never anything but its own text, so this is exactly
+      // `lines.length > 0` — kept as its own field only so reconcile.js can read the
+      // same name regardless of which reader produced the page (see pptxSlideSummaries).
+      hasText: text.length > 0,
     });
   }
   await doc.cleanup();
   return { pages, undecoded };
+}
+
+/**
+ * The same shape pdfLines() returns, read from a .pptx's own slide parts instead of a
+ * PDF's operator list — one entry per slide, independent of whatever pptxToMarkdown did
+ * with the same file, for the same reason pdfLines() is its own read rather than reusing
+ * pdf-extract.js's: a bug in rendering the Markdown must never also blind the thing
+ * checking it. `drawn`/`undecoded` have no pptx equivalent and are always empty/zero;
+ * `picture` is real, read the same way a PDF page's is — no text, but a picture present.
+ */
+async function pptxLines(filePath, ocrSlides) {
+  const { pptxSlideSummaries } = require('./pptx-extract');
+  const slides = await pptxSlideSummaries(filePath, ocrSlides);
+  return {
+    pages: slides.map(s => ({
+      number: s.number, lines: s.lines,
+      images: s.picture ? 1 : 0, drawn: [], undecoded: 0, picture: s.picture, hasText: s.hasText,
+    })),
+    undecoded: 0,
+  };
 }
 
 /**
@@ -388,18 +412,27 @@ function illustrations(pages) {
  * @param {string} opts.raw - Markdown as extracted, used where the source cannot be re-read
  * @param {string} opts.html - The rendered HTML
  * @param {Set<number>} [opts.pages] - The pages that were converted, if not all of them
+ * @param {Map<number,string>} [opts.ocrSlides] - Recovered text per slide, for a .pptx
+ *   anydoc-ocr just OCR'd — see pptxSlideSummaries for why this needs to be told, not
+ *   discovered by re-reading the source.
  * @returns {Promise<{missing: object[], furniture: object[], renumbered: object[], lines: number}>}
  */
-async function verify(inputPath, { raw, html, pages: wanted = null }) {
+async function verify(inputPath, { raw, html, pages: wanted = null, ocrSlides = null }) {
   const { repeatedFurniture } = require('./pdf-extract');
-  const fromPage = path.extname(inputPath).toLowerCase() === '.pdf';
-  const read = fromPage
-    ? await pdfLines(inputPath, wanted)
+  const ext = path.extname(inputPath).toLowerCase();
+  // A PDF and a .pptx both offer a second, independent way to read the document — its
+  // own pages, or its own slide parts — so both are read back and checked rather than
+  // trusted. Every other format has only the extraction itself to compare the rendered
+  // output against, which is the weaker, single-witness check `fromPage: false` names.
+  const fromPage = ext === '.pdf' || ext === '.pptx';
+  const read = ext === '.pdf' ? await pdfLines(inputPath, wanted)
+    : ext === '.pptx' ? await pptxLines(inputPath, ocrSlides)
     : {
       pages: [{
         number: 1,
         lines: raw.split('\n').filter(line => !OWN_MARKUP.test(line)),
         images: 0, drawn: [], undecoded: 0, picture: false,
+        hasText: raw.split('\n').some(line => !OWN_MARKUP.test(line) && line.trim()),
       }],
       undecoded: 0,
     };
@@ -470,6 +503,10 @@ async function verify(inputPath, { raw, html, pages: wanted = null }) {
     images: page.images,
     undecoded: page.undecoded,
     picture: page.picture,
+    // Not always `lines > 0` — a slide's lines carry pptxToMarkdown's own heading
+    // alongside its real text, so this is the one field that means only "does this page
+    // or slide hold real, readable content" regardless of which reader produced it.
+    hasText: page.hasText,
   }));
 
   return {
