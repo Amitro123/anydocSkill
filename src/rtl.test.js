@@ -640,7 +640,7 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
 // --sidecar transcript parser, all kept in src/ocr-args.js purely so this can check
 // them without ocrmypdf installed.
 {
-  const { parseArgs, buildSidecarOcrArgs, buildSidecarImageOcrArgs, parseSidecar } = require('./ocr-args');
+  const { parseArgs, buildSidecarOcrArgs, parseSidecar } = require('./ocr-args');
 
   const args = parseArgs(['doc.pdf', '--lang', 'heb+eng', '--out-dir', 'out']);
   assert.strictEqual(args.input, 'doc.pdf');
@@ -662,17 +662,6 @@ assert(geo.joinOneLine(rtlEmitted) === 'כלכלת טוקנים',
   assert.deepStrictEqual(argv.slice(argv.indexOf('-l') + 1, argv.indexOf('-l') + 2), ['heb+eng']);
   assert(argv[argv.length - 2] === 'in.pdf' && argv[argv.length - 1] === 'out.pdf',
     'input and output are positional and last, as ocrmypdf expects');
-
-  // A bare image has no pages or pre-existing text layer to restrict a run to, unlike
-  // a PDF page — buildSidecarImageOcrArgs carries neither flag.
-  const imageArgv = buildSidecarImageOcrArgs('slide2.png', 'out.pdf', 'side.txt', 'heb+eng');
-  assert(!imageArgv.includes('--pages'), 'an image is not one page of a larger document');
-  assert(!imageArgv.includes('--skip-text'), 'an extracted image has no text layer to skip');
-  assert.deepStrictEqual(
-    imageArgv.slice(imageArgv.indexOf('--sidecar') + 1, imageArgv.indexOf('--sidecar') + 2), ['side.txt']);
-  assert.deepStrictEqual(imageArgv.slice(imageArgv.indexOf('-l') + 1, imageArgv.indexOf('-l') + 2), ['heb+eng']);
-  assert(imageArgv[imageArgv.length - 2] === 'slide2.png' && imageArgv[imageArgv.length - 1] === 'out.pdf',
-    'input and output are positional and last, same as the page-restricted form');
 
   // parseSidecar: real ocrmypdf output, restricted to one page, is one real transcript
   // chunk plus a skip placeholder for whatever else the run saw.

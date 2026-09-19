@@ -4,15 +4,16 @@
  *
  * src/ocr-args.js's buildSidecarOcrArgs restricts every real page invocation to one
  * page, so this only has to answer one question: what should the --sidecar transcript
- * for --pages N be? That comes from FAKE_OCR_SIDECAR, a JSON object keyed by page (or,
- * for an image extracted from a slide, slide) number as a string, an env var each test
- * case sets. A page missing from it gets an empty transcript — OCR ran and found
- * nothing, a real and unremarkable outcome, not a stub bug needing special-casing.
+ * be? That comes from FAKE_OCR_SIDECAR, a JSON object keyed by page or slide number as a
+ * string, an env var each test case sets. A page missing from it gets an empty
+ * transcript — OCR ran and found nothing, a real and unremarkable outcome, not a stub
+ * bug needing special-casing.
  *
- * buildSidecarImageOcrArgs (the .pptx path) carries no --pages — there is only ever the
- * one image — so the key comes from the input filename instead: src/ocr.js names each
- * extracted image s<N>.<ext>, and this reads N back out the same way it would read
- * --pages if the flag were there.
+ * The key itself comes from the input filename first, not --pages — src/ocr.js names
+ * every picture it wraps as its own one-page PDF s<N>-<i>.pdf (see wrapImageAsPdf in
+ * src/ocr-pdf.js), so --pages is always "1" there regardless of which slide it came
+ * from, and only the filename still says which slide it actually is. A real multi-page
+ * PDF being OCR'd page by page has no such name, so --pages is the fallback for it.
  *
  * The output PDF this is also asked to write is never read by src/ocr.js — see
  * src/ocr-pdf.js's doc comment for why — so a minimal placeholder is enough to exist at
@@ -36,9 +37,8 @@ const outputPath = argv[argv.length - 1];
 const inputPath = argv[argv.length - 2];
 
 const pagesIndex = argv.indexOf('--pages');
-const key = pagesIndex !== -1
-  ? argv[pagesIndex + 1]
-  : (require('path').basename(inputPath).match(/^s(\d+)/) || [])[1];
+const fromFilename = (require('path').basename(inputPath).match(/^s(\d+)-/) || [])[1];
+const key = fromFilename || (pagesIndex !== -1 ? argv[pagesIndex + 1] : undefined);
 
 const transcripts = JSON.parse(process.env.FAKE_OCR_SIDECAR || '{}');
 fs.writeFileSync(sidecarPath, transcripts[key] || '', 'utf8');

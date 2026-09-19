@@ -66,25 +66,6 @@ function buildSidecarOcrArgs(inputPath, outputPath, sidecarPath, page, lang) {
   ];
 }
 
-/**
- * One picture, one ocrmypdf invocation.
- *
- * ocrmypdf accepts a raster image directly and converts it to a one-page PDF as its
- * first internal step, so --pages and --skip-text — both about restricting a run to
- * part of a multi-page document that might already have text — have nothing to mean
- * here: there is only ever the one page, and an image extracted from a slide has no
- * pre-existing text layer to skip in the first place.
- */
-function buildSidecarImageOcrArgs(inputPath, outputPath, sidecarPath, lang) {
-  return [
-    '-l', lang,
-    '--output-type', 'pdf',
-    '--optimize', '0',
-    '--sidecar', sidecarPath,
-    inputPath, outputPath,
-  ];
-}
-
 // A whole chunk naming a page or range ocrmypdf was told to leave alone — never a
 // document's own text, which makes it safe to filter out unconditionally rather than
 // trying to tell it apart from a real transcript that happens to start similarly.
@@ -106,6 +87,6 @@ function parseSidecar(text) {
 }
 
 module.exports = {
-  parseArgs, buildSidecarOcrArgs, buildSidecarImageOcrArgs, parseSidecar,
+  parseArgs, buildSidecarOcrArgs, parseSidecar,
   _internals: { FLAGS, SKIPPED_CHUNK },
 };

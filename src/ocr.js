@@ -46,7 +46,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
-const { parseArgs, buildSidecarOcrArgs, buildSidecarImageOcrArgs, parseSidecar } = require('./ocr-args');
+const { parseArgs, buildSidecarOcrArgs, parseSidecar } = require('./ocr-args');
 
 const CONVERT = path.join(__dirname, 'convert.js');
 
@@ -174,16 +174,28 @@ function ocrPage(inputPath, page, lang, work) {
  * OCR every picture on one picture-only slide and return their transcripts joined as
  * separate paragraphs. Almost always exactly one image; a slide can carry more than
  * one, and none of them has a page number of its own to restrict a run to the way a
- * PDF page does — each is its own, separate, one-image OCR invocation.
+ * PDF page does.
+ *
+ * Each is wrapped as its own one-page PDF first (src/ocr-pdf.js's wrapImageAsPdf) and
+ * OCR'd the same way a PDF page already is, rather than handed to ocrmypdf as a bare
+ * image — confirmed against a real deck to be necessary, not a defensive guess: a bare
+ * image without scanner-style DPI metadata, or with a PNG's alpha channel, is refused
+ * outright before the wrap, and a wrapped one page's worth of PDF is exactly what
+ * buildSidecarOcrArgs already knows how to OCR.
  */
-function ocrSlideImages(images, slideNumber, lang, work) {
-  const texts = images.map((image, i) => {
+async function ocrSlideImages(images, slideNumber, lang, work) {
+  const { wrapImageAsPdf } = require('./ocr-pdf');
+  const texts = [];
+  for (let i = 0; i < images.length; i++) {
+    const image = images[i];
     const ext = path.extname(image.entryName) || '.png';
-    const imagePath = path.join(work, `s${slideNumber}-${i}${ext}`);
-    fs.writeFileSync(imagePath, image.data);
-    const throwaway = path.join(work, `s${slideNumber}-${i}.pdf`);
+    const pdfBytes = await wrapImageAsPdf(image.data, ext);
+    const inputPdf = path.join(work, `s${slideNumber}-${i}.pdf`);
+    fs.writeFileSync(inputPdf, pdfBytes);
+
+    const throwaway = path.join(work, `s${slideNumber}-${i}-ocr.pdf`);
     const sidecar = path.join(work, `s${slideNumber}-${i}.sidecar.txt`);
-    const result = spawnSync('ocrmypdf', buildSidecarImageOcrArgs(imagePath, throwaway, sidecar, lang),
+    const result = spawnSync('ocrmypdf', buildSidecarOcrArgs(inputPdf, throwaway, sidecar, 1, lang),
       { encoding: 'utf8' });
     if (result.status !== 0) {
       throw new Error(
@@ -191,8 +203,8 @@ function ocrSlideImages(images, slideNumber, lang, work) {
         `${(result.stderr || result.stdout || '').trim()}`
       );
     }
-    return parseSidecar(fs.readFileSync(sidecar, 'utf8'));
-  });
+    texts.push(parseSidecar(fs.readFileSync(sidecar, 'utf8')));
+  }
   return texts.filter(Boolean).join('\n\n');
 }
 
@@ -290,7 +302,7 @@ async function run({ input, outDir, lang, format }) {
       const images = await pptxSlideImages(input, pictureOnly);
       const ocrSlides = {};
       for (const slide of pictureOnly) {
-        ocrSlides[slide] = ocrSlideImages(images.get(slide) || [], slide, lang, work);
+        ocrSlides[slide] = await ocrSlideImages(images.get(slide) || [], slide, lang, work);
       }
       const ocrSlidesPath = path.join(work, 'ocr-slides.json');
       fs.writeFileSync(ocrSlidesPath, JSON.stringify(ocrSlides), 'utf8');
